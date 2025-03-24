@@ -38,7 +38,7 @@ void CustomButton::initButtonUL(
   _textsize = textsize;
   _gfx = gfx;
   _label = label;
-  // strncpy(_label, label, 9);
+  repeatDelay = 0;
 }
 
 // Adjust text datum and x, y deltas
@@ -49,7 +49,7 @@ void CustomButton::setLabelDatum(int16_t x_delta, int16_t y_delta, uint8_t datum
   _textdatum = datum;
 }
 
-void CustomButton::drawButton(bool inverted, String long_name)
+void CustomButton::drawButton(bool inverted, String long_name, String sub_label)
 {
   uint16_t fill, outline, text;
 
@@ -66,7 +66,7 @@ void CustomButton::drawButton(bool inverted, String long_name)
     text = _fillcolor;
   }
 
-  uint8_t r = min(_w, _h) / 4; // Corner radius
+  uint8_t r = min(_w, _h) / 12; // Corner radius
   _gfx->fillRoundRect(_x, _y, _w, _h, r, fill);
   _gfx->drawRoundRect(_x, _y, _w, _h, r, outline);
 
@@ -84,8 +84,8 @@ void CustomButton::drawButton(bool inverted, String long_name)
   uint8_t rows = 0;
   uint16_t centerX = _x + (_w / 2) + _xd;
   uint16_t centerY = _y + (_h / 2) - 4 + _yd;
-  uint8_t labelLineSize = _w / _gfx->textWidth("W") - 1;
-  uint8_t lineHeight = _gfx->fontHeight();
+  uint8_t labelLineSize = 7; //_w / _gfx->textWidth("W");
+  uint8_t lineHeight = _gfx->fontHeight() * 4 / 5;
   std::vector<String> subStrings;
 
   while (label.length() > labelLineSize)
@@ -96,12 +96,10 @@ void CustomButton::drawButton(bool inverted, String long_name)
       // found no spaces for linebreak
       idx = label.length() - labelLineSize;
       subStrings.push_back(label.substring(idx));
-      // _gfx->drawString(label.substring(idx), statusX, statusY - (_gfx->fontHeight() * rows));
     }
     else
     {
       subStrings.push_back(label.substring(idx + 1));
-      // _gfx->drawString(label.substring(idx + 1), statusX, statusY - (_gfx->fontHeight() * rows));
     }
     label.remove(idx);
     rows++;
@@ -110,11 +108,17 @@ void CustomButton::drawButton(bool inverted, String long_name)
 
   for (uint8_t i = 0; i < subStrings.size(); i++)
   {
-    _gfx->drawString(subStrings[i], centerX, centerY + lineHeight * rows / -2 + lineHeight * i);
+    _gfx->drawString(subStrings[i], centerX, centerY - (lineHeight * i) + (lineHeight * rows / 2) + 2);
   }
-    // _gfx->drawString(label, statusX, statusY - (_gfx->fontHeight() * rows));
 
-    // _gfx->drawString(label, _x + (_w / 2) + _xd, _y + (_h / 2) - 4 + _yd);
+  if (sub_label != "")
+  {
+    _gfx->setTextPadding(_w);
+    _gfx->setTextColor(TFT_BLACK, TFT_LIGHTGREY);
+    _gfx->setTextFont(0);
+    _gfx->setTextSize(1);
+    _gfx->drawString(sub_label, _x + (_w / 2), _y + _h + 10);
+  }
 
   _gfx->setTextDatum(tempdatum);
   _gfx->setTextPadding(tempPadding);
@@ -124,6 +128,16 @@ bool CustomButton::contains(int16_t x, int16_t y)
 {
   return ((x >= _x) && (x < (_x + _w)) &&
           (y >= _y) && (y < (_y + _h)));
+}
+
+void CustomButton::setMyFunction(std::function<void(void)> function)
+{
+  _myFunction = function;
+}
+
+void CustomButton::runMyFunction()
+{
+  _myFunction();
 }
 
 void CustomButton::press(bool p)
@@ -149,6 +163,7 @@ void IncrementButton::initButton(TFT_eSPI *gfx, int16_t x, int16_t y,
   _fillcolor = fill;
   _textcolor = textcolor;
   _gfx = gfx;
+  repeatDelay = 1000;
 
   _v1.x = x;
   _v1.y = y + (h / 2);
@@ -193,25 +208,6 @@ void IncrementButton::drawButton(bool inverted, String long_name)
       _gfx->drawFastVLine(symbolX + (i - 1), _y - (symbolSize / 2), symbolSize, text);
     }
   }
-    
-
-  // _gfx->setTextColor(text, fill);
-
-  // uint8_t tempSize = _gfx->textsize;
-  // _gfx->setTextSize(_textsize);
-  // uint8_t tempdatum = _gfx->getTextDatum();
-  // _gfx->setTextDatum(_textdatum);
-  // uint16_t tempPadding = _gfx->getTextPadding();
-  // _gfx->setTextPadding(0);
-
-  // center is (3/8)w from ref point
-  // int16_t offset = _positive ? _w * 5 / 16 : _w * -5 / 16;
-
-  // _gfx->drawString(_label, _x + offset + _xd, _y + _yd);
-
-  // _gfx->setTextDatum(tempdatum);
-  // _gfx->setTextPadding(tempPadding);
-  // _gfx->setTextSize(tempSize);
 }
 
 bool IncrementButton::contains(int16_t x, int16_t y)

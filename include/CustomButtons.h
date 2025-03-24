@@ -27,12 +27,20 @@ public:
   // Adjust text datum and x, y deltas
   void setLabelDatum(int16_t x_delta, int16_t y_delta, uint8_t datum = MC_DATUM);
 
-  virtual void drawButton(bool inverted = false, String long_name = "");
+  virtual void drawButton(bool inverted = false, String long_name = "", String sub_label = "");
   virtual bool contains(int16_t x, int16_t y);
+
+  void setMyFunction(std::function<void(void)> function);
+  void runMyFunction();
+
   void press(bool p);
   bool isPressed();
   bool justPressed();
   bool justReleased();
+
+  uint16_t repeatDelay;
+  uint16_t repeatCounter;
+  unsigned long timePressed;
 
 protected:
   TFT_eSPI *_gfx;
@@ -42,9 +50,10 @@ protected:
   uint8_t _textsize, _textdatum; // Text size multiplier and text datum for button
   uint16_t _outlinecolor, _fillcolor, _textcolor;
   bool currstate, laststate; // Button states
-  
+  std::function<void(void)> _myFunction;
+
+
 private:
-  //char _label[10]; // Button text is 9 chars maximum unless long_name used
   String _label;
 };
 

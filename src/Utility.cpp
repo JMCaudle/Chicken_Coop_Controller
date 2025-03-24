@@ -38,7 +38,7 @@ void Utility::status(String msg)
   uint8_t tempSize = tft.textsize;
   uint8_t tempDatum = tft.getTextDatum();
   uint16_t tempPadding = tft.getTextPadding();
-  uint8_t tempFont = tft.textfont;
+  // GFXfont* tempFont = tft.gfxFont;
   tft.setTextPadding(tft.width() - clockPadding);
   tft.setTextColor(TFT_WHITE, TFT_BLACK);
   tft.setTextFont(0);
@@ -64,7 +64,7 @@ void Utility::status(String msg)
   }
   tft.drawString(message, statusX, statusY - (tft.fontHeight() * rows));
 
-  tft.setTextFont(tempFont);
+  // tft.setTextFont(tempFont);
   tft.setTextDatum(tempDatum);
   tft.setTextSize(tempSize);
   tft.setTextPadding(tempPadding);

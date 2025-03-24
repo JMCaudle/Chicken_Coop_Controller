@@ -12,6 +12,16 @@ namespace Utility
 
 #define TFT_MIDGREY 0xA514
 
+  struct ButtonState
+  {
+    std::function<void(void)> btnFunction;
+    String btnText;
+    String btnLabel;
+
+    ButtonState(std::function<void(void)> bf, String bt, String bl = "")
+        : btnFunction(bf), btnText(bt), btnLabel(bl) {};
+  };
+
   void setPanelTextSettings();
 
   String fractionalMinutesToTimeString(double fM);

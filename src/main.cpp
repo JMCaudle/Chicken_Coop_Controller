@@ -22,7 +22,6 @@ make your own configuration.h file, ie...
 #include <sunset.h>
 #include <functional>
 #include <vector>
-// #include <variant>
 
 #include "Tab.h"
 #include "DataPoint.h"
@@ -45,11 +44,16 @@ SunSet sun;
 
 #define TAB_TEXTSIZE 1
 
-#define PR_PIN 36
+// #define PR_PIN 36
 
 #define MY_NTP_SERVER "pool.ntp.org"
 //------------------------------------------------------------------------------------------
 
+//input pins
+const int prPin = 36, closedDoorSensorPin = A5, openDoorSensorPin = A4, btnPin = 13;
+
+//output pins
+const int lampPin = 12, lockPin = 11, motFwd = 10, motRev = 9, sprayPin = 8;
 
 struct Tabs
 {
@@ -62,15 +66,16 @@ struct Tabs
   };
 };
 
-// enum GeneralElements
-// {
+using Utility::ButtonState;
 
-// };
-
+void initializePins();
 void initializePanels();
-void addDisplayElement(DataPoint *dp, String label, int8_t panel);
-void addUpDownDisplayElement(DataPoint *dp, String label, int8_t panel);
-void handleTouchInput();
+void addDisplayElement(DataPoint *dp, int8_t panel, String label);
+void addUpDownDisplayElement(DataPoint *dp, int8_t panel, String label);
+// void addButtonDisplayElement(DataPoint *dp, int8_t panel, String btnTxt,
+//                              String altTxt = "", String label = "");
+void addButtonDisplayElement(DataPoint *dp, int8_t panel, 
+                             std::vector<ButtonState *>* buttonStates);
 
 void drawTabs();
 void drawPanelUI();
@@ -81,6 +86,27 @@ void updateLightLevels();
 void testFunction();
 
 void touch_calibrate();
+void handleTouchInput();
+void checkDoorSensors();
+
+void turnNightLightOn();
+void turnNightLightOff();
+
+void turnMainLightOn();
+void turnMainLightOff();
+
+void openDoor();
+void closeDoor();
+void manualHaltDoor();
+void returnDoor();
+void stopDoor();
+void windUp();
+void windDown();
+
+void resetDoorSensors();
+
+void calcByLight();
+void calcByTime();
 
 const uint8_t numTabs = 4;
 char tabLabel[numTabs][8] = {"General", "Power", "Time", "Temp"};
@@ -93,6 +119,8 @@ uint16_t panelBottom = tft.height() - sysTrayHeight;
 uint8_t deHeight = 34;
 uint8_t openTab = 0;
 std::vector<DisplayElement*> panelDEs[numTabs];
+uint8_t buttonYposMultiplier[numTabs];
+uint16_t buttonYpos = panelBottom - 52;
 uint16_t statusX, statusY;
 uint16_t clockPadding;
 uint8_t statusLineSize;
@@ -100,10 +128,13 @@ uint8_t statusLineSize;
 time_t now; // this is the seconds since Epoch (1970) - UTC
 struct tm tm;      // the structure tm holds time information in a more convenient way *
 int currentMin = -1;
-bool day;
 
 unsigned long timeStamp;
 unsigned long lastSecondStamp;
+
+IntData secondsCounter; //testing
+IntData nightLightState;
+std::vector<ButtonState *> nightLightBSs;
 
 DoubleData nextSunset(true);
 DoubleData nextSunrise(true);
@@ -114,11 +145,21 @@ IntData lightCutoff;
 IntData currentLight;
 StringData doorStatus;
 StringData doorSensorStatus;
+IntData mainLightState;
+std::vector<ButtonState *> mainLightBSs;
+IntData doorState;
+std::vector<ButtonState *> doorBSs;
+IntData resetDoorSensorsState;
+std::vector<ButtonState *> resetDoorSensorsBSs;
+IntData timeOrLightState;
+std::vector<ButtonState *> timeOrLightBSs;
 
-IntData secondsCounter;
-
-
-
+bool day;
+bool openingDoor;
+bool closingDoor;
+bool doorLastOpening;
+unsigned long doorStartTime;
+unsigned long doorTimeout = 10000; // stop trying to move door if 10 seconds have passed withour success
 
 void setup()
 {
@@ -141,7 +182,7 @@ void setup()
   tft.setTextSize(1);
   clockPadding = tft.textWidth("88:88 88/88/88");
   tft.setTextFont(0);
-  statusLineSize = (tft.width() - clockPadding) / tft.textWidth("W") - 1;
+  statusLineSize = (tft.width() - clockPadding) / tft.textWidth("W") - 1; // 14
 
   // Clear the screen
   tft.fillScreen(TFT_BLACK);
@@ -175,9 +216,14 @@ void setup()
   tasker.setInterval(testFunction, 500);
   tasker.setInterval(updateNightHours, 5000);  //run this at morning, no tasker
   tasker.setInterval(updateLightLevels, 1000);
-  //replace these with tasks
-  doorStatus.setValue("Locked Open");
+
+  //replace these with tasks / methods
+  doorStatus.setValue("Locked Shut");
   doorSensorStatus.setValue("Nominal");
+  // mainLightOn.setValue(true);
+  // doorOpen.setValue(true);
+  // resetDoorSensors.setValue(true);
+  // basedOnLight.setValue(true);
 
   // lastSecondStamp = millis();
 }
@@ -186,7 +232,9 @@ void setup()
 
 void loop(void)
 {
-  handleTouchInput();
+  timeStamp = millis();
+  checkDoorSensors();
+  handleTouchInput(); //needs to be called last
 
   // possibly wrap this block in an if statement, with the option to run from light levels
   double currentTime = Utility::toFractionalMinutes(tm.tm_hour, tm.tm_min, tm.tm_sec);
@@ -207,7 +255,6 @@ void loop(void)
     }
   }
 
-  // timeStamp = millis();
   // if (timeStamp - lastSecondStamp > 1000)
   // {
   //   lastSecondStamp = timeStamp;
@@ -219,29 +266,46 @@ void loop(void)
 
 //------------------------------------------------------------------------------------------
 
+void initializePins()
+{
+  pinMode(lampPin, OUTPUT);
+}
+
 void initializePanels()
 {
   // *** General Panel Display Elements ***
-  addDisplayElement(&secondsCounter, "Seconds:", Tabs::General);
+  addDisplayElement(&secondsCounter, Tabs::General, "Seconds:");
+  nightLightBSs.push_back(new ButtonState(turnNightLightOn, "Night Light Off", "Turn On")); // 0
+  nightLightBSs.push_back(new ButtonState(turnNightLightOff, "Night Light On", "Turn Off")); // 1
+  addButtonDisplayElement(&nightLightState, Tabs::General, &nightLightBSs);
 
   // *** Power Panel Display Elements ***
   // TBD, almost all basic DisplayElements
   // With the possibility of a few buttons on the bottom
 
   // *** Time Panel Display Elements ***
-  addDisplayElement(&nextSunset, "Nightfall", Tabs::Time);
-  addDisplayElement(&nextSunrise, "Sunrise", Tabs::Time);
-  addUpDownDisplayElement(&idealNight, "Ideal Night", Tabs::Time);
-  addUpDownDisplayElement(&nextNight, "Next Night", Tabs::Time);
-  addUpDownDisplayElement(&lightCutoff, "Light Cutoff", Tabs::Time);
-  addDisplayElement(&currentLight, "Light Level", Tabs::Time);
-  addDisplayElement(&doorStatus, "Door", Tabs::Time);
-  addDisplayElement(&doorSensorStatus, "Door Sensors", Tabs::Time);
-  // Reset Door Sensor Status Non-Toggle Button
-  // Main Light               Toggle Button / timer
-  // Night Light              Toggle Button / timer
-  // Door                     Toggle Button / no timer
-  // Time/Light               Toggle Button / no timer
+  addDisplayElement(&nextSunset, Tabs::Time, "Nightfall");
+  addDisplayElement(&nextSunrise, Tabs::Time, "Sunrise");
+  addUpDownDisplayElement(&idealNight, Tabs::Time, "Ideal Night");
+  addUpDownDisplayElement(&nextNight, Tabs::Time, "Next Night");
+  addUpDownDisplayElement(&lightCutoff, Tabs::Time, "Light Cutoff");
+  addDisplayElement(&currentLight, Tabs::Time, "Light Level");
+  addDisplayElement(&doorStatus, Tabs::Time, "Door");
+  addDisplayElement(&doorSensorStatus, Tabs::Time, "Door Sensors");
+  mainLightBSs.push_back(new ButtonState(turnMainLightOn, "Main Light Off", "Turn On")); // 0
+  mainLightBSs.push_back(new ButtonState(turnMainLightOff, "Main Light On", "Turn Off")); // 1
+  addButtonDisplayElement(&mainLightState, Tabs::Time, &mainLightBSs);
+  doorBSs.push_back(new ButtonState(openDoor, "Door Closed", "Open Door"));  // 0
+  doorBSs.push_back(new ButtonState(manualHaltDoor, "Door Opening", "Stop Door")); // 1
+  doorBSs.push_back(new ButtonState(closeDoor, "Door Open", "Close Door")); // 2
+  doorBSs.push_back(new ButtonState(manualHaltDoor, "Door Closing", "Stop Door")); // 3
+  doorBSs.push_back(new ButtonState(returnDoor, "Door Stopped", "Return Door")); // 4
+  addButtonDisplayElement(&doorState, Tabs::Time, &doorBSs);
+  resetDoorSensorsBSs.push_back(new ButtonState(resetDoorSensors, "Reset Door Sensors"));
+  addButtonDisplayElement(&resetDoorSensorsState, Tabs::Time, &resetDoorSensorsBSs);
+  timeOrLightBSs.push_back(new ButtonState(calcByLight, "Night From Time", "Use Light")); // 0
+  timeOrLightBSs.push_back(new ButtonState(calcByTime, "Night From Light", "Use Time")); // 1
+  addButtonDisplayElement(&timeOrLightState, Tabs::Time, &timeOrLightBSs);
 
   // ***Temp Panel Display Elements***
   // Indoor Temp              Display Element
@@ -253,19 +317,103 @@ void initializePanels()
 
 }
 
-void addDisplayElement(DataPoint* dp, String label, int8_t panel)
+void addDisplayElement(DataPoint *dp, int8_t panel, String label)
 {
   DisplayElement *de = new DisplayElement(&tft, dp, label, 0, 
     panelTop + 20 + (deHeight * panelDEs[panel].size()), width, deHeight);
   panelDEs[panel].push_back(de);
 }
 
-void addUpDownDisplayElement(DataPoint *dp, String label, int8_t panel)
+void addUpDownDisplayElement(DataPoint *dp, int8_t panel, String label)
 {
   DisplayElement *de = new UpDownElement(&tft, dp, label, 0,
     panelTop + 20 + (deHeight * panelDEs[panel].size()), width, deHeight);
   panelDEs[panel].push_back(de);
 }
+
+// new plan involves passing an (int)DataPoint pointer, the panel, 
+// and a ptr to a vector of button states
+void addButtonDisplayElement(DataPoint* dp, int8_t panel, std::vector<ButtonState*>* buttonStates)
+{
+  // refactor this to base Y position off the panel bottom, not the last horizontal DE
+  if(buttonYposMultiplier[panel] == 0)
+  {
+    buttonYposMultiplier[panel] = panelDEs[panel].size();
+  }
+  DisplayElement *de = new ButtonElement(&tft, dp,
+      42 + 78 * (panelDEs[panel].size() - buttonYposMultiplier[panel]),
+      buttonYpos, 72, 64, buttonStates);
+  panelDEs[panel].push_back(de);
+}
+
+// void addButtonDisplayElement(DataPoint* dp, int8_t panel, String btnTxt, 
+//                               String altTxt, String label)
+// {
+//   // refactor this to base Y position off the panel bottom, not the last horizontal DE
+//   if(buttonYposMultiplier[panel] == 0)
+//   {
+//     buttonYposMultiplier[panel] = panelDEs[panel].size();
+//   }
+//   DisplayElement *de = new ButtonElement(&tft, dp,
+//       42 + 78 * (panelDEs[panel].size() - buttonYposMultiplier[panel]),
+//       panelTop + 20 + 40 + (deHeight * buttonYposMultiplier[panel]), 72, 64,
+//       btnTxt, altTxt, label);
+//   panelDEs[panel].push_back(de);
+// }
+
+void drawTabs()
+{
+  int tabColor;
+  for (uint8_t i = 0; i < numTabs; i++){
+    uint8_t tabWidth = tft.width() / numTabs;
+    tab[i].initTabUL(&tft, i * tabWidth, tabHeight * 0.1,
+                     tabWidth, tabHeight,
+                     TFT_WHITE, TFT_LIGHTGREY, TFT_DARKGREY, TFT_WHITE,
+                     tabLabel[i], (GFXfont *)ACTIVE_FONT, 
+                     (GFXfont *)INACTIVE_FONT, TAB_TEXTSIZE);
+    tab[i].drawTab();
+  }
+}
+
+void drawPanelUI()
+{
+  tft.fillRect(0, panelTop, tft.width(), panelBottom - panelTop, TFT_LIGHTGREY);
+  tft.drawFastVLine(0, panelTop, panelBottom - panelTop, TFT_WHITE);
+  tft.drawFastVLine(tft.width() - 1, panelTop - 4, panelBottom - panelTop + 4, TFT_WHITE);
+  tft.drawFastHLine(0, panelBottom, tft.width(), TFT_WHITE);
+  Utility::setPanelTextSettings();
+
+  for (int i = 0; i < panelDEs[openTab].size(); i++)
+  {
+      panelDEs[openTab][i]->drawLabel();
+      panelDEs[openTab][i]->linkUpDataPoint();
+      panelDEs[openTab][i]->getDataPoint()->processValue();
+  }
+}
+
+// TODO - break this up into updateSysTime and drawSysTime
+void drawSysTime()
+{
+  time(&now);             // read the current time
+  localtime_r(&now, &tm); // update the structure tm with the current time
+  if(currentMin != tm.tm_min)
+  { // only update display when min changes
+    tft.setTextPadding(clockPadding);
+    tft.setTextColor(TFT_WHITE, TFT_BLACK);
+    tft.setFreeFont(CLOCK_FONT);
+    tft.setTextDatum(CL_DATUM);
+    char hourStr[3];
+    sprintf(hourStr, "%02d", tm.tm_hour);
+    char minStr[3];
+    sprintf(minStr, "%02d", tm.tm_min);
+    String timeString = (String)hourStr + ":" + (String)minStr + " " +
+                        (String)(tm.tm_mon + 1) + "/" + (String)tm.tm_mday +
+                        "/" + (String)(tm.tm_year % 100);
+    tft.drawString(timeString, 5, (panelBottom + tft.height()) / 2);
+    currentMin = tm.tm_min;
+  }
+}
+//------------------------------------------------------------------------------------------
 
 void handleTouchInput()
 {
@@ -306,64 +454,37 @@ void handleTouchInput()
     }
     else
     {
-      // Touch is on Panel UI
+      // Touch is on Panel UI - check each element on the open panel
+      for (int8_t i = 0; i < panelDEs[openTab].size(); i++)
+      {
+        panelDEs[openTab][i]->handleButtonTouchInput(t_x, t_y);
+      }
     }
     // delay(10);  // possibly needed for UI debouncing
   }
 }
 
-void drawTabs()
+void checkDoorSensors()
 {
-  int tabColor;
-  for (uint8_t i = 0; i < numTabs; i++){
-    uint8_t tabWidth = tft.width() / numTabs;
-    tab[i].initTabUL(&tft, i * tabWidth, tabHeight * 0.1,
-                     tabWidth, tabHeight,
-                     TFT_WHITE, TFT_LIGHTGREY, TFT_DARKGREY, TFT_WHITE,
-                     tabLabel[i], (GFXfont *)ACTIVE_FONT, 
-                     (GFXfont *)INACTIVE_FONT, TAB_TEXTSIZE);
-    tab[i].drawTab();
-  }
-}
-
-void drawPanelUI()
-{
-  tft.fillRect(0, panelTop, tft.width(), panelBottom - panelTop, TFT_LIGHTGREY);
-  tft.drawFastVLine(0, panelTop, panelBottom - panelTop, TFT_WHITE);
-  tft.drawFastVLine(tft.width() - 1, panelTop - 4, panelBottom - panelTop + 4, TFT_WHITE);
-  tft.drawFastHLine(0, panelBottom, tft.width(), TFT_WHITE);
-  Utility::setPanelTextSettings();
-
-  for (int i = 0; i < panelDEs[openTab].size(); i++)
+  if (openingDoor)
   {
-      panelDEs[openTab][i]->drawLabel();
-      panelDEs[openTab][i]->linkUpDataPoint();
+    if (/*digitalRead(openDoorSensorPin) == LOW || */timeStamp - doorStartTime >= doorTimeout)
+    {
+      tasker.setTimeout(stopDoor, 500);
+      openingDoor = false;
+      doorState.setValue(2);
+    }
+  }  
+  else if (closingDoor)
+  {
+    if (/*digitalRead(closedDoorSensorPin) == LOW || */timeStamp - doorStartTime >= doorTimeout)
+    {
+      tasker.setTimeout(stopDoor, 5500);
+      closingDoor = false;
+      doorState.setValue(0);
+    }
   }
 }
-
-// TODO - break this up into updateSysTime and drawSysTime
-void drawSysTime()
-{
-  time(&now);             // read the current time
-  localtime_r(&now, &tm); // update the structure tm with the current time
-  if(currentMin != tm.tm_min)
-  { // only update display when min changes
-    tft.setTextPadding(clockPadding);
-    tft.setTextColor(TFT_WHITE, TFT_BLACK);
-    tft.setFreeFont(CLOCK_FONT);
-    tft.setTextDatum(CL_DATUM);
-    char hourStr[3];
-    sprintf(hourStr, "%02d", tm.tm_hour);
-    char minStr[3];
-    sprintf(minStr, "%02d", tm.tm_min);
-    String timeString = (String)hourStr + ":" + (String)minStr + " " +
-                        (String)(tm.tm_mon + 1) + "/" + (String)tm.tm_mday +
-                        "/" + (String)(tm.tm_year % 100);
-    tft.drawString(timeString, 5, (panelBottom + tft.height()) / 2);
-    currentMin = tm.tm_min;
-  }
-}
-//------------------------------------------------------------------------------------------
 
 void touch_calibrate()
 {
@@ -450,10 +571,109 @@ void updateNightHours()
 
 void updateLightLevels()
 {
-  currentLight.setValue(analogRead(PR_PIN));
+  currentLight.setValue(analogRead(prPin));
 }
 
 void testFunction()
 {
   secondsCounter.setValue(tm.tm_sec);
+}
+
+void turnNightLightOn()
+{
+  // toggle relevant pin
+  nightLightState.setValue(1);
+}
+
+void turnNightLightOff()
+{
+  // toggle relevant pin
+  nightLightState.setValue(0);
+}
+
+void turnMainLightOn()
+{
+  // toggle the relevant pin
+  mainLightState.setValue(1);
+}
+
+void turnMainLightOff()
+{
+  // toggle the relevant pin
+  mainLightState.setValue(0);
+}
+
+void openDoor()
+{
+  digitalWrite(lockPin, LOW);      // unlock
+  tasker.setTimeout(windUp, 200); // begin raising door after 0.2 seconds
+  doorStartTime = millis();
+  doorState.setValue(1);
+  openingDoor = true;
+  doorLastOpening = true;
+}
+
+void closeDoor()
+{
+  digitalWrite(lockPin, LOW);        // unlock
+  tasker.setTimeout(windDown, 200); // begin closing door after 0.2 seconds
+  doorStartTime = millis();
+  doorState.setValue(3);
+  closingDoor = true;
+  doorLastOpening = false;
+}
+
+// manual override door stop function
+void manualHaltDoor()
+{
+  stopDoor();
+  // set a WARNING flag
+  doorState.setValue(4);
+}
+
+void returnDoor()
+{
+  if (doorLastOpening)
+  {
+    closeDoor();
+  }
+  else
+  {
+    openDoor();
+  }
+}
+
+void stopDoor()
+{
+  openingDoor = closingDoor = false;
+  digitalWrite(motFwd, LOW);
+  digitalWrite(motRev, LOW);
+  digitalWrite(lockPin, HIGH);
+}
+
+void windUp()
+{
+  digitalWrite(motFwd, HIGH);
+  // openingDoor = true;
+}
+
+void windDown()
+{
+  digitalWrite(motRev, HIGH);
+  // closingDoor = true;
+}
+
+void resetDoorSensors()
+{
+  doorSensorStatus.setValue("Nominal");
+}
+
+void calcByLight()
+{
+  timeOrLightState.setValue(1);
+}
+
+void calcByTime()
+{
+  timeOrLightState.setValue(0);
 }

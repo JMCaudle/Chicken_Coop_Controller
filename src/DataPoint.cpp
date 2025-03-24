@@ -7,10 +7,9 @@ DataPoint::DataPoint()
 
 void DataPoint::processValue(){}
 
-void DataPoint::setAndUseCallback(std::function<void(String)> cbk)
+void DataPoint::setCallback(std::function<void(String)> cbk)
 {
   onChanged = cbk;
-  processValue();
 }
 
 void DataPoint::clearCallback()
@@ -30,6 +29,7 @@ void BoolData::processValue()
 {
   if (onChanged != nullptr)
   {
+    // Utility::status("In if bool process value: " + (String)_value);
     onChanged((String)_value);
   }
 }
@@ -38,7 +38,9 @@ void BoolData::setValue(bool val)
 {
   if (val != _value)
   {
+    // Utility::status("In the If of BoolData setValue");
     _value = val;
+    // Utility::status((String)_value);
     processValue();
   }
 }

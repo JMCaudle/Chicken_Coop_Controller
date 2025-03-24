@@ -10,7 +10,7 @@ public:
   DataPoint();
 
   virtual void processValue();
-  void setAndUseCallback(std::function<void(String)> cbk);
+  void setCallback(std::function<void(String)> cbk);
   void clearCallback();
 
 protected:
