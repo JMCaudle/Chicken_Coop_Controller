@@ -45,6 +45,23 @@ void DisplayElement::drawValue(String val)
   _gfx->drawString(_prefix + val + _suffix, _x + _w - 5, _y + (_h / 2));
 }
 
+void DisplayElement::noTouch()
+{
+  // each element has up to 2 buttons
+  for (int8_t j = 0; j < 2; j++)
+  {
+    // Does this element have a button?
+    if (buttons[j] != nullptr)
+    {    
+      buttons[j]->press(false);    
+    }
+    else
+    {
+      break; // If no first button, don't check for second button
+    }
+  }
+}
+
 void DisplayElement::handleButtonTouchInput(uint16_t t_x, uint16_t t_y)
 {
   // each element has up to 2 buttons

@@ -21,6 +21,7 @@ public:
   virtual void drawLabel();
   virtual void drawValue(String val);
 
+  void noTouch();
   void handleButtonTouchInput(uint16_t t_x, uint16_t t_y);
   CustomButton *buttons[2] = {nullptr, nullptr};
 

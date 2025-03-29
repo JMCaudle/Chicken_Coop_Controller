@@ -11,15 +11,17 @@ make your own configuration.h file, ie...
 
 // The SPIFFS (FLASH filing system) is used to hold touch screen
 // calibration data
-#include "FS.h"
+// #include "FS.h"
+#include <Preferences.h>
 
 #include <SPI.h>
 #include <TFT_eSPI.h> // Hardware-specific library
 #include <WiFi.h>
 #include <time.h>
-#include <EEPROM.h>
 #include <Tasker.h>
 #include <sunset.h>
+#include <OneWire.h>
+#include <DallasTemperature.h>
 #include <functional>
 #include <vector>
 
@@ -31,29 +33,39 @@ make your own configuration.h file, ie...
 TFT_eSPI tft = TFT_eSPI(); // Invoke custom library
 Tasker tasker;
 SunSet sun;
+Preferences preferences;
 
 // This is the file name used to store the calibration data
 // You can change this to create new calibration files.
 // The SPIFFS file name must start with "/".
-#define CALIBRATION_FILE "/TouchCalData2"
+// #define CALIBRATION_FILE "/TouchCalData2"
 
 // Set REPEAT_CAL to true instead of false to run calibration
 // again, otherwise it will only be done once.
 // Repeat calibration if you change the screen rotation.
-#define REPEAT_CAL false
+// #define REPEAT_CAL false
 
 #define TAB_TEXTSIZE 1
 
 // #define PR_PIN 36
 
 #define MY_NTP_SERVER "pool.ntp.org"
+
+// #define MACRO_VARIABLE_TO_STRING(Variable) (void(Variable), #Variable)
 //------------------------------------------------------------------------------------------
 
 //input pins
-const int prPin = 36, closedDoorSensorPin = A5, openDoorSensorPin = A4, btnPin = 13;
+const int prPin = 36, closedDoorSensorPin = A5, openDoorSensorPin = A4, btnPin = 22, 
+          tempPin = 13;
 
 //output pins
-const int lampPin = 12, lockPin = 11, motFwd = 10, motRev = 9, sprayPin = 8;
+const int lampPin = 15, lockPin = 11, motFwd = 10, motRev = 9, sprayPin = 8;
+
+// Setup a oneWire instance to communicate with any OneWire devices
+OneWire oneWire(tempPin);
+
+// Pass our oneWire reference to Dallas Temperature sensor
+DallasTemperature tempSensors(&oneWire);
 
 struct Tabs
 {
@@ -68,15 +80,23 @@ struct Tabs
 
 using Utility::ButtonState;
 
+void wifiStart();
+void wifiConnect();
+void wifiAttemptConnection();
+void wifiDisconnectCallback(WiFiEvent_t event, WiFiEventInfo_t info);
+void wifiStatus(String status);
+
 void initializePins();
+void initializeTabs();
 void initializePanels();
-void addDisplayElement(DataPoint *dp, int8_t panel, String label);
+void addDisplayElement(DataPoint *dp, int8_t panel, String label, String pre = "", String suf = "");
 void addUpDownDisplayElement(DataPoint *dp, int8_t panel, String label);
 // void addButtonDisplayElement(DataPoint *dp, int8_t panel, String btnTxt,
 //                              String altTxt = "", String label = "");
 void addButtonDisplayElement(DataPoint *dp, int8_t panel, 
                              std::vector<ButtonState *>* buttonStates);
 
+void drawMainUI();
 void drawTabs();
 void drawPanelUI();
 void drawSysTime();
@@ -85,6 +105,7 @@ void updateNightHours();
 void updateLightLevels();
 void testFunction();
 
+void ensureValidTouchCalibration();
 void touch_calibrate();
 void handleTouchInput();
 void checkDoorSensors();
@@ -108,10 +129,13 @@ void resetDoorSensors();
 void calcByLight();
 void calcByTime();
 
+void updateTemperatures();
+
 const uint8_t numTabs = 4;
 char tabLabel[numTabs][8] = {"General", "Power", "Time", "Temp"};
 TFT_eSPI_Tab tab[numTabs];
-uint16_t width;
+uint16_t maxWidth;
+uint16_t maxHeight;
 uint8_t tabHeight = 50;
 uint8_t sysTrayHeight = 40;
 uint16_t panelTop = tabHeight * 1.1 + 1;
@@ -119,11 +143,14 @@ uint16_t panelBottom = tft.height() - sysTrayHeight;
 uint8_t deHeight = 34;
 uint8_t openTab = 0;
 std::vector<DisplayElement*> panelDEs[numTabs];
-uint8_t buttonYposMultiplier[numTabs];
+uint8_t buttonCounter[numTabs];
 uint16_t buttonYpos = panelBottom - 52;
 uint16_t statusX, statusY;
 uint16_t clockPadding;
 uint8_t statusLineSize;
+uint8_t statusFontHeight;
+char statusBuffer[3][15] = {"", "", ""};
+uint8_t connectionAttempts;
 
 time_t now; // this is the seconds since Epoch (1970) - UTC
 struct tm tm;      // the structure tm holds time information in a more convenient way *
@@ -139,8 +166,8 @@ std::vector<ButtonState *> nightLightBSs;
 DoubleData nextSunset(true);
 DoubleData nextSunrise(true);
 DoubleData fauxSunrise(true);
-IntData idealNight;
-IntData nextNight;
+IntData idealNight(true);
+IntData artificialNight(true);
 IntData lightCutoff;
 IntData currentLight;
 StringData doorStatus;
@@ -153,6 +180,9 @@ IntData resetDoorSensorsState;
 std::vector<ButtonState *> resetDoorSensorsBSs;
 IntData timeOrLightState;
 std::vector<ButtonState *> timeOrLightBSs;
+
+FloatData insideTemp;
+FloatData outsideTemp;
 
 bool day;
 bool openingDoor;
@@ -168,33 +198,39 @@ void setup()
 
   // Initialise the TFT screen
   tft.init();
-
-  // Set the rotation before we calibrate
   tft.setRotation(2);
 
-  // Calibrate the touch screen and retrieve the scaling factors
-  touch_calibrate();
-
   // Calculate SysTray settings
-  statusX = tft.width();
-  statusY = tft.height();
   tft.setFreeFont(CLOCK_FONT);
   tft.setTextSize(1);
   clockPadding = tft.textWidth("88:88 88/88/88");
   tft.setTextFont(0);
+  maxHeight = tft.height();
+  statusFontHeight = tft.fontHeight();
+  statusY = maxHeight - statusFontHeight;
+  statusX = maxWidth = tft.width();
   statusLineSize = (tft.width() - clockPadding) / tft.textWidth("W") - 1; // 14
 
-  // Clear the screen
-  tft.fillScreen(TFT_BLACK);
+  // Initialize Non-Volatile Data Storage
+  preferences.begin("ChickenCoop", false);
+  // preferences.clear(); //remove this
+  idealNight.makeDataPersist("idealNight", 540);
+  artificialNight.makeDataPersist("artificialNight", 660);
+  lightCutoff.makeDataPersist("lightCutoff", 150);
+  timeOrLightState.makeDataPersist("TorLstate", false);
 
+  initializePins();
   openTab = Tabs::Time; // remove this later
-  width = tft.width();
+  initializeTabs();
   initializePanels();
   tab[openTab].open(true);
-  drawTabs();
-  drawPanelUI();
+  drawMainUI();
 
-  //WiFi.persistent(false);
+  ensureValidTouchCalibration();
+
+  wifiStart();
+/*
+    //WiFi.persistent(false);
   //WiFi.mode(WIFI_STA);
   WiFi.begin(STASSID, STAPSK);
   while (WiFi.status() != WL_CONNECTED)
@@ -205,17 +241,23 @@ void setup()
     Utility::status("");
   }
   Utility::status("WiFi connected");
+*/
 
+  // not waiting for the wifi to finish connecting means we start with erroneous time
+  // but it should fix within a few minutes of wifi connecting
   configTime(0, 0, MY_NTP_SERVER); // 0, 0 because we will use TZ in the next line
   setenv("TZ", MY_TZ, 1);          // Set environment variable with your time zone
   tzset();
 
   sun.setPosition(LATITUDE, LONGITUDE, DST_OFFSET);
 
+  tempSensors.begin();
+
   tasker.setInterval(drawSysTime, 1000);
   tasker.setInterval(testFunction, 500);
   tasker.setInterval(updateNightHours, 5000);  //run this at morning, no tasker
   tasker.setInterval(updateLightLevels, 1000);
+  tasker.setInterval(updateTemperatures, 5000);
 
   //replace these with tasks / methods
   doorStatus.setValue("Locked Shut");
@@ -232,8 +274,13 @@ void setup()
 
 void loop(void)
 {
+  if(digitalRead(btnPin) == LOW)
+  {
+    touch_calibrate();
+  }
+
   timeStamp = millis();
-  checkDoorSensors();
+  checkDoorSensors(); 
   handleTouchInput(); //needs to be called last
 
   // possibly wrap this block in an if statement, with the option to run from light levels
@@ -269,6 +316,22 @@ void loop(void)
 void initializePins()
 {
   pinMode(lampPin, OUTPUT);
+  pinMode(btnPin, INPUT_PULLUP);
+}
+
+void initializeTabs()
+{
+  // int tabColor;
+  for (uint8_t i = 0; i < numTabs; i++)
+  {
+    uint8_t tabWidth = tft.width() / numTabs;
+    tab[i].initTabUL(&tft, i * tabWidth, tabHeight * 0.1,
+                     tabWidth, tabHeight,
+                     TFT_WHITE, TFT_LIGHTGREY, TFT_DARKGREY, TFT_WHITE,
+                     tabLabel[i], (GFXfont *)ACTIVE_FONT, 
+                     (GFXfont *)INACTIVE_FONT, TAB_TEXTSIZE);
+    // tab[i].drawTab();
+  }
 }
 
 void initializePanels()
@@ -287,7 +350,7 @@ void initializePanels()
   addDisplayElement(&nextSunset, Tabs::Time, "Nightfall");
   addDisplayElement(&nextSunrise, Tabs::Time, "Sunrise");
   addUpDownDisplayElement(&idealNight, Tabs::Time, "Ideal Night");
-  addUpDownDisplayElement(&nextNight, Tabs::Time, "Next Night");
+  addUpDownDisplayElement(&artificialNight, Tabs::Time, "Achieved Night");
   addUpDownDisplayElement(&lightCutoff, Tabs::Time, "Light Cutoff");
   addDisplayElement(&currentLight, Tabs::Time, "Light Level");
   addDisplayElement(&doorStatus, Tabs::Time, "Door");
@@ -308,8 +371,8 @@ void initializePanels()
   addButtonDisplayElement(&timeOrLightState, Tabs::Time, &timeOrLightBSs);
 
   // ***Temp Panel Display Elements***
-  // Indoor Temp              Display Element
-  // Outdoor Temp             Display Element
+  addDisplayElement(&insideTemp, Tabs::Temp, "Inside Temp.", "", " F");
+  addDisplayElement(&outsideTemp, Tabs::Temp, "Outside Temp.", "", " F");
   // Spray Temp Cutoff        UpDown
   // Spray Duration           UpDown
   // Spray Cooldown           UpDown
@@ -317,32 +380,25 @@ void initializePanels()
 
 }
 
-void addDisplayElement(DataPoint *dp, int8_t panel, String label)
+void addDisplayElement(DataPoint *dp, int8_t panel, String label, String pre, String suf)
 {
   DisplayElement *de = new DisplayElement(&tft, dp, label, 0, 
-    panelTop + 20 + (deHeight * panelDEs[panel].size()), width, deHeight);
+    panelTop + 20 + (deHeight * panelDEs[panel].size()), maxWidth, deHeight, pre, suf);
   panelDEs[panel].push_back(de);
 }
 
 void addUpDownDisplayElement(DataPoint *dp, int8_t panel, String label)
 {
   DisplayElement *de = new UpDownElement(&tft, dp, label, 0,
-    panelTop + 20 + (deHeight * panelDEs[panel].size()), width, deHeight);
+    panelTop + 20 + (deHeight * panelDEs[panel].size()), maxWidth, deHeight);
   panelDEs[panel].push_back(de);
 }
 
-// new plan involves passing an (int)DataPoint pointer, the panel, 
-// and a ptr to a vector of button states
 void addButtonDisplayElement(DataPoint* dp, int8_t panel, std::vector<ButtonState*>* buttonStates)
 {
-  // refactor this to base Y position off the panel bottom, not the last horizontal DE
-  if(buttonYposMultiplier[panel] == 0)
-  {
-    buttonYposMultiplier[panel] = panelDEs[panel].size();
-  }
-  DisplayElement *de = new ButtonElement(&tft, dp,
-      42 + 78 * (panelDEs[panel].size() - buttonYposMultiplier[panel]),
-      buttonYpos, 72, 64, buttonStates);
+  buttonCounter[panel] += 1;
+  DisplayElement *de = new ButtonElement(&tft, dp, 42 + 78 * (buttonCounter[panel] - 1), 
+                                          buttonYpos, 72, 64, buttonStates);
   panelDEs[panel].push_back(de);
 }
 
@@ -361,16 +417,17 @@ void addButtonDisplayElement(DataPoint* dp, int8_t panel, std::vector<ButtonStat
 //   panelDEs[panel].push_back(de);
 // }
 
+void drawMainUI()
+{
+  tft.fillScreen(TFT_BLACK);
+  drawTabs();
+  drawPanelUI();
+}
+
 void drawTabs()
 {
-  int tabColor;
-  for (uint8_t i = 0; i < numTabs; i++){
-    uint8_t tabWidth = tft.width() / numTabs;
-    tab[i].initTabUL(&tft, i * tabWidth, tabHeight * 0.1,
-                     tabWidth, tabHeight,
-                     TFT_WHITE, TFT_LIGHTGREY, TFT_DARKGREY, TFT_WHITE,
-                     tabLabel[i], (GFXfont *)ACTIVE_FONT, 
-                     (GFXfont *)INACTIVE_FONT, TAB_TEXTSIZE);
+  for (uint8_t i = 0; i < numTabs; i++)
+  {
     tab[i].drawTab();
   }
 }
@@ -462,6 +519,13 @@ void handleTouchInput()
     }
     // delay(10);  // possibly needed for UI debouncing
   }
+  else
+  {
+    for (int8_t i = 0; i < panelDEs[openTab].size(); i++)
+    {
+      panelDEs[openTab][i]->noTouch();
+    }
+  }
 }
 
 void checkDoorSensors()
@@ -486,6 +550,54 @@ void checkDoorSensors()
   }
 }
 
+void ensureValidTouchCalibration()
+{
+  uint16_t calData[5];
+  // bool calDataOK;
+
+  if (preferences.isKey("calData") && preferences.getBytesLength("calData") == 10)
+  {
+    preferences.getBytes("calData", calData, 10);
+    tft.setTouch(calData);
+  }
+  else
+  {
+    touch_calibrate();
+  }
+}
+
+void touch_calibrate()
+{
+  uint16_t calData[5];
+  // uint8_t calDataOK = 0;
+  if (preferences.isKey("calData"))
+  {
+    preferences.remove("calData");
+  }
+
+  tft.fillScreen(TFT_BLACK);
+  tft.setCursor(20, 0);
+  tft.setTextFont(2);
+  tft.setTextSize(1);
+  tft.setTextColor(TFT_WHITE, TFT_BLACK);
+
+  tft.println("Touch corners as indicated");
+
+  tft.setTextFont(1);
+  tft.println();
+
+  tft.calibrateTouch(calData, TFT_MAGENTA, TFT_BLACK, 15);
+
+  tft.setTextColor(TFT_GREEN, TFT_BLACK);
+  tft.println("Calibration complete!");
+
+  // store data
+  preferences.putBytes("calData", calData, 10);
+
+  drawMainUI();
+}
+
+/*
 void touch_calibrate()
 {
   uint16_t calData[5];
@@ -558,7 +670,7 @@ void touch_calibrate()
     }
   }
 }
-
+*/
 //------------------------------------------------------------------------------------------
 
 // might need to check if (tm_year != 69) before running
@@ -593,13 +705,13 @@ void turnNightLightOff()
 
 void turnMainLightOn()
 {
-  // toggle the relevant pin
+  digitalWrite(lampPin, HIGH);
   mainLightState.setValue(1);
 }
 
 void turnMainLightOff()
 {
-  // toggle the relevant pin
+  digitalWrite(lampPin, LOW);
   mainLightState.setValue(0);
 }
 
@@ -676,4 +788,75 @@ void calcByLight()
 void calcByTime()
 {
   timeOrLightState.setValue(0);
+}
+
+void updateTemperatures()
+{
+  tempSensors.requestTemperatures();
+  insideTemp.setValue(tempSensors.getTempFByIndex(0));
+  outsideTemp.setValue(tempSensors.getTempFByIndex(1));
+}
+
+void wifiStart()
+{
+  WiFi.disconnect(true);
+  delay(1000);
+  WiFi.onEvent(wifiDisconnectCallback, WiFiEvent_t::ARDUINO_EVENT_WIFI_STA_DISCONNECTED);
+  wifiConnect();
+}
+
+void wifiConnect()
+{
+  // WiFi.persistent(false);
+  // WiFi.mode(WIFI_STA);
+  WiFi.begin(STASSID, STAPSK);
+  tasker.setInterval(wifiAttemptConnection, 100);
+}
+
+void wifiAttemptConnection()
+{
+  if (WiFi.status() != WL_CONNECTED)
+  {
+    if (connectionAttempts > 200)
+    {
+      wifiStatus("Retrying Wifi");
+      WiFi.disconnect();
+      WiFi.begin(STASSID, STAPSK);
+      connectionAttempts = 0;
+    }
+    else
+    {
+      wifiStatus(connectionAttempts % 2 ? "Connecting  " : "Connecting .");
+      connectionAttempts++;
+    }
+  }
+  else
+  {
+    wifiStatus("Wifi Connected");
+    connectionAttempts = 0;
+    tasker.cancel(wifiAttemptConnection);
+  }
+}
+
+void wifiDisconnectCallback(WiFiEvent_t event, WiFiEventInfo_t info)
+{
+  wifiConnect();
+}
+
+void wifiStatus(String status)
+{
+  uint8_t tempSize = tft.textsize;
+  uint8_t tempDatum = tft.getTextDatum();
+  uint16_t tempPadding = tft.getTextPadding();
+
+  tft.setTextPadding(maxWidth - clockPadding);
+  tft.setTextColor(TFT_WHITE, TFT_BLACK);
+  tft.setTextFont(0);
+  tft.setTextDatum(BR_DATUM);
+  tft.setTextSize(1);
+  tft.drawString(status, maxWidth, maxHeight);
+
+  tft.setTextDatum(tempDatum);
+  tft.setTextSize(tempSize);
+  tft.setTextPadding(tempPadding);
 }

@@ -3,13 +3,21 @@
 extern uint16_t statusX, statusY;
 extern uint16_t clockPadding;
 extern uint8_t statusLineSize;
+extern uint8_t statusFontHeight;
+extern char statusBuffer[3][15];
 extern TFT_eSPI tft;
 
+// using namespace Utility;
 
 void Utility::setPanelTextSettings()
 {
   tft.setFreeFont(DISPLAY_ELEMENT_FONT);
   tft.setTextColor(TFT_WHITE, TFT_LIGHTGREY);
+}
+
+String Utility::minutesToTimeString(int mins)
+{
+  return fractionalMinutesToTimeString((double)mins);
 }
 
 String Utility::fractionalMinutesToTimeString(double fM)
@@ -28,6 +36,17 @@ double Utility::toFractionalMinutes(int hour, int min, int sec)
   return /*(double)*/(hour * 60) + min + ((double)sec / 60);
 }
 
+void addLineToStatusBuffer(String line)
+{
+  Serial.println("Line from addLineToStatusBuffer: " + line);
+  // statusBuffer[2] = statusBuffer[1];
+  // statusBuffer[1] = statusBuffer[0];
+  // statusBuffer[0] = line;
+  strcpy(statusBuffer[2], statusBuffer[1]);
+  strcpy(statusBuffer[1], statusBuffer[0]);
+  strcpy(statusBuffer[0], line.c_str());
+}
+
 void Utility::status(const char *msg)
 {
   Utility::status((String)msg);
@@ -38,34 +57,67 @@ void Utility::status(String msg)
   uint8_t tempSize = tft.textsize;
   uint8_t tempDatum = tft.getTextDatum();
   uint16_t tempPadding = tft.getTextPadding();
-  // GFXfont* tempFont = tft.gfxFont;
+
   tft.setTextPadding(tft.width() - clockPadding);
   tft.setTextColor(TFT_WHITE, TFT_BLACK);
   tft.setTextFont(0);
   tft.setTextDatum(BR_DATUM);
   tft.setTextSize(1);
   String message = msg;
-  uint8_t rows = 0;
+  Serial.println("Whole message from status: " + message);
+
+  // while (message.length() > statusLineSize)
+  // {
+  //   int idx = message.indexOf(" ", message.length() - statusLineSize);
+  //   if (idx == -1)
+  //   {
+  //     // found no spaces for linebreak
+  //     idx = message.length() - statusLineSize;
+  //     addLineToStatusBuffer(message.substring(idx));
+  //     // tft.drawString(message.substring(idx), statusX, statusY - (statusFontHeight * rows));
+  //   }
+  //   else
+  //   {
+  //     addLineToStatusBuffer(message.substring(idx + 1));
+  //     // tft.drawString(message.substring(idx + 1), statusX, statusY - (statusFontHeight * rows));
+  //   }
+  //   message.remove(idx);
+  //   // rows++;
+  // }
+
+  message.trim();
   while (message.length() > statusLineSize)
   {
-    int idx = message.indexOf(" ", message.length() - statusLineSize);
-    if (idx == -1)
+    int idx = message.indexOf(" ");
+    if (idx == -1 || idx >= statusLineSize)
     {
       // found no spaces for linebreak
-      idx = message.length() - statusLineSize;
-      tft.drawString(message.substring(idx), statusX, statusY - (tft.fontHeight() * rows));
+      idx = statusLineSize;
+      addLineToStatusBuffer(message.substring(0, idx));
+      message.remove(0, idx);
+      // tft.drawString(message.substring(idx), statusX, statusY - (statusFontHeight * rows));
     }
     else
     {
-      tft.drawString(message.substring(idx + 1), statusX, statusY - (tft.fontHeight() * rows));
+      addLineToStatusBuffer(message.substring(0, idx));
+      message.remove(0, idx + 1);
+      // tft.drawString(message.substring(idx + 1), statusX, statusY - (statusFontHeight * rows));
     }
-    message.remove(idx);
-    rows++;
+    // addLineToStatusBuffer(message.substring(0, idx));
+    // message.remove(0, idx);
+    // rows++;
+    message.trim();
   }
-  tft.drawString(message, statusX, statusY - (tft.fontHeight() * rows));
+  addLineToStatusBuffer(message);
 
-  // tft.setTextFont(tempFont);
+  for (uint8_t row = 0; row < 3; row++)
+  {
+    tft.drawString(statusBuffer[row], statusX, statusY - (statusFontHeight * row));
+  }
+    
+
   tft.setTextDatum(tempDatum);
   tft.setTextSize(tempSize);
   tft.setTextPadding(tempPadding);
 }
+
