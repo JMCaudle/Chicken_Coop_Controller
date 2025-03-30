@@ -90,7 +90,7 @@ void initializePins();
 void initializeTabs();
 void initializePanels();
 void addDisplayElement(DataPoint *dp, int8_t panel, String label, String pre = "", String suf = "");
-void addUpDownDisplayElement(DataPoint *dp, int8_t panel, String label);
+void addUpDownDisplayElement(DataPoint *dp, int8_t panel, String label, String pre = "", String suf = "");
 // void addButtonDisplayElement(DataPoint *dp, int8_t panel, String btnTxt,
 //                              String altTxt = "", String label = "");
 void addButtonDisplayElement(DataPoint *dp, int8_t panel, 
@@ -130,6 +130,9 @@ void calcByLight();
 void calcByTime();
 
 void updateTemperatures();
+
+void startSpray();
+void stopSpray();
 
 const uint8_t numTabs = 4;
 char tabLabel[numTabs][8] = {"General", "Power", "Time", "Temp"};
@@ -183,6 +186,12 @@ std::vector<ButtonState *> timeOrLightBSs;
 
 FloatData insideTemp;
 FloatData outsideTemp;
+IntData tempCutoff;
+IntData sprayDuration;
+IntData sprayCooldown;
+IntData sprayState;
+std::vector<ButtonState *> sprayBSs;
+
 
 bool day;
 bool openingDoor;
@@ -373,10 +382,12 @@ void initializePanels()
   // ***Temp Panel Display Elements***
   addDisplayElement(&insideTemp, Tabs::Temp, "Inside Temp.", "", " F");
   addDisplayElement(&outsideTemp, Tabs::Temp, "Outside Temp.", "", " F");
-  // Spray Temp Cutoff        UpDown
-  // Spray Duration           UpDown
-  // Spray Cooldown           UpDown
-  // Force Spray              Toggle Button / timer
+  addUpDownDisplayElement(&tempCutoff, Tabs::Temp, "Spray at Temp.", "", " F");
+  addUpDownDisplayElement(&sprayDuration, Tabs::Temp, "Spray Duration", "", "m");
+  addUpDownDisplayElement(&sprayCooldown, Tabs::Temp, "Spray Cooldown", "", "m");
+  sprayBSs.push_back(new ButtonState(startSpray, "Spray is Off", "Start Spray"));
+  sprayBSs.push_back(new ButtonState(stopSpray, "Spray is On", "Stop Spray"));
+  addButtonDisplayElement(&sprayState, Tabs::Temp, &sprayBSs);
 
 }
 
@@ -387,10 +398,10 @@ void addDisplayElement(DataPoint *dp, int8_t panel, String label, String pre, St
   panelDEs[panel].push_back(de);
 }
 
-void addUpDownDisplayElement(DataPoint *dp, int8_t panel, String label)
+void addUpDownDisplayElement(DataPoint *dp, int8_t panel, String label, String pre, String suf)
 {
   DisplayElement *de = new UpDownElement(&tft, dp, label, 0,
-    panelTop + 20 + (deHeight * panelDEs[panel].size()), maxWidth, deHeight);
+    panelTop + 20 + (deHeight * panelDEs[panel].size()), maxWidth, deHeight, pre, suf);
   panelDEs[panel].push_back(de);
 }
 
@@ -532,6 +543,7 @@ void checkDoorSensors()
 {
   if (openingDoor)
   {
+    // Break these into nested ifs to check if this was a good run for the rolling average
     if (/*digitalRead(openDoorSensorPin) == LOW || */timeStamp - doorStartTime >= doorTimeout)
     {
       tasker.setTimeout(stopDoor, 500);
@@ -739,7 +751,7 @@ void closeDoor()
 void manualHaltDoor()
 {
   stopDoor();
-  // set a WARNING flag
+  // set a WARNING flag, do not use value for rolling average
   doorState.setValue(4);
 }
 
@@ -796,6 +808,22 @@ void updateTemperatures()
   insideTemp.setValue(tempSensors.getTempFByIndex(0));
   outsideTemp.setValue(tempSensors.getTempFByIndex(1));
 }
+
+void startSpray()
+{
+  // Set relevant pin to start sprayer
+  sprayState.setValue(1);
+  tasker.setTimeout(stopSpray, 60000 * sprayDuration.getValue());
+}
+
+void stopSpray()
+{
+  // Set relevant pin to stop sprayer
+  sprayState.setValue(0);
+  // probably toggle a bool to tell loop when it can spray again
+}
+
+///////////////////////////////////////////////////////
 
 void wifiStart()
 {

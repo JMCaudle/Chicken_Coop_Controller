@@ -142,9 +142,10 @@ void UpDownElement::drawValue(String val)
   String catStr = _prefix + val + _suffix;
   _gfx->fillRect(_gfx->width() - _dataPadding, _y, _dataPadding - 1, _h, TFT_LIGHTGREY);
   _gfx->drawString(catStr, _x + _w - (_bw + 2 * _bs), _y + (_h / 2));
-  // int16_t valWidth = _gfx->textWidth(catStr);
+  int16_t valWidth = _gfx->textWidth(catStr);
   // Utility::status((String)valWidth);
-  int16_t valWidth = catStr.length() * _gfx->textWidth("8");
+  // int16_t valWidth = catStr.length() * _gfx->textWidth("8");
+  // int16_t valWidth = catStr.length() * _gfx->textWidth("W");
 
   plusBtn.initButton(_gfx, _x + _w - (_bw + _bs), _y + (_h / 2), _bw, _bh,
                      TFT_BLACK, TFT_WHITE, TFT_LIGHTGREY, true);
