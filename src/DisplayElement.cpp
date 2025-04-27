@@ -13,6 +13,7 @@ DisplayElement::DisplayElement(TFT_eSPI* gfx, DataPoint* dp, String label, int x
   _y = y;
   _w = w;
   _h = h;
+  _interactive = true;
 }
 
 void DisplayElement::linkUpDataPoint()
@@ -45,6 +46,12 @@ void DisplayElement::drawValue(String val)
   _gfx->drawString(_prefix + val + _suffix, _x + _w - 5, _y + (_h / 2));
 }
 
+void DisplayElement::setInteractivity(bool interactive)
+{
+  _interactive = interactive;
+  _dp->processValue();
+}
+
 void DisplayElement::noTouch()
 {
   // each element has up to 2 buttons
@@ -64,6 +71,11 @@ void DisplayElement::noTouch()
 
 void DisplayElement::handleButtonTouchInput(uint16_t t_x, uint16_t t_y)
 {
+  if(!_interactive)
+  {
+    return;
+  }
+  
   // each element has up to 2 buttons
   for (int8_t j = 0; j < 2; j++)
   {
@@ -134,37 +146,26 @@ UpDownElement::UpDownElement(TFT_eSPI *gfx, DataPoint *dp, String label, int x, 
 
 void UpDownElement::drawValue(String val)
 {
-  // Utility::status("In the UDE drawValue method.");
-
   _gfx->setTextDatum(CR_DATUM);
   Utility::setPanelTextSettings();
   _gfx->setTextPadding(_dataPadding - (_bw + 2 * _bs));
   String catStr = _prefix + val + _suffix;
   _gfx->fillRect(_gfx->width() - _dataPadding, _y, _dataPadding - 1, _h, TFT_LIGHTGREY);
   _gfx->drawString(catStr, _x + _w - (_bw + 2 * _bs), _y + (_h / 2));
-  int16_t valWidth = _gfx->textWidth(catStr);
-  // Utility::status((String)valWidth);
-  // int16_t valWidth = catStr.length() * _gfx->textWidth("8");
-  // int16_t valWidth = catStr.length() * _gfx->textWidth("W");
+  uint16_t valWidth = _gfx->textWidth(catStr);
+  // uint16_t valWidth = catStr.length() * _gfx->textWidth("8");
+  // uint16_t valWidth = catStr.length() * _gfx->textWidth("W");
+  uint16_t fill = _interactive ? TFT_WHITE : TFT_MIDGREY;
 
   plusBtn.initButton(_gfx, _x + _w - (_bw + _bs), _y + (_h / 2), _bw, _bh,
-                     TFT_BLACK, TFT_WHITE, TFT_LIGHTGREY, true);
+                     TFT_BLACK, fill, TFT_LIGHTGREY, true);
   plusBtn.drawButton();
   minusBtn.initButton(_gfx, _x + _w - (_bw + 3 * _bs) - valWidth, _y + (_h / 2), _bw, _bh,
-                      TFT_BLACK, TFT_WHITE, TFT_LIGHTGREY, false);
+                      TFT_BLACK, fill, TFT_LIGHTGREY, false);
   minusBtn.drawButton();
   Utility::setPanelTextSettings();
 }
 
-ButtonElement::ButtonElement(TFT_eSPI *gfx, DataPoint *dp, int x, int y, int w, int h,
-                             String btnText, String btnAlt, String label)
-    : DisplayElement(gfx, dp, label, x, y, w, h)
-{
-  _btnText = btnText;
-  _btnAlt = btnAlt;
-  btn.initButton(gfx, x, y, w, h, TFT_BLACK, TFT_DARKGREY, TFT_WHITE, _btnText, 1);
-  buttons[0] = &btn;
-}
 
 ButtonElement::ButtonElement(TFT_eSPI *gfx, DataPoint *dp, int x, int y, int w, int h,
                              std::vector<ButtonState *> *btnStates)
@@ -186,7 +187,6 @@ void ButtonElement::drawValue(String val)
 
   // also investigate passing references instead of pointers
   btn.setMyFunction((*_btnStates)[stIdx]->btnFunction);
-  btn.drawButton(true, (*_btnStates)[stIdx]->btnText, (*_btnStates)[stIdx]->btnLabel);
+  btn.drawButton(_interactive, (*_btnStates)[stIdx]->btnText, (*_btnStates)[stIdx]->btnLabel);
   //should not need to set inverted to true, confused
-  // Utility::status((String)_y);
 }

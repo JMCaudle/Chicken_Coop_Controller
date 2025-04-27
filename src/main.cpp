@@ -13,6 +13,9 @@ make your own configuration.h file, ie...
 // calibration data
 // #include "FS.h"
 #include <Preferences.h>
+#include <ArduinoOTA.h>
+#include <ESPmDNS.h>
+#include <WiFiUdp.h>
 
 #include <SPI.h>
 #include <TFT_eSPI.h> // Hardware-specific library
@@ -35,31 +38,20 @@ Tasker tasker;
 SunSet sun;
 Preferences preferences;
 
-// This is the file name used to store the calibration data
-// You can change this to create new calibration files.
-// The SPIFFS file name must start with "/".
-// #define CALIBRATION_FILE "/TouchCalData2"
-
-// Set REPEAT_CAL to true instead of false to run calibration
-// again, otherwise it will only be done once.
-// Repeat calibration if you change the screen rotation.
-// #define REPEAT_CAL false
-
 #define TAB_TEXTSIZE 1
-
-// #define PR_PIN 36
 
 #define MY_NTP_SERVER "pool.ntp.org"
 
-// #define MACRO_VARIABLE_TO_STRING(Variable) (void(Variable), #Variable)
+#define VERSION "2.2.70"
 //------------------------------------------------------------------------------------------
 
 //input pins
-const int prPin = 36, closedDoorSensorPin = A5, openDoorSensorPin = A4, btnPin = 22, 
-          tempPin = 13;
+const int prPin = 34, closedDoorSensorPin = 39, openDoorSensorPin = 36, btnPin = 22, 
+          tempPin = 32;
 
 //output pins
-const int lampPin = 15, lockPin = 11, motFwd = 10, motRev = 9, sprayPin = 8;
+const int lampPin = 15, nightLightPin = 13, bistroLightPin = 12, lockPin = 14, 
+          sprayPin = 27, fanPin = 26, motFwd = 25, motRev = 33;
 
 // Setup a oneWire instance to communicate with any OneWire devices
 OneWire oneWire(tempPin);
@@ -85,16 +77,25 @@ void wifiConnect();
 void wifiAttemptConnection();
 void wifiDisconnectCallback(WiFiEvent_t event, WiFiEventInfo_t info);
 void wifiStatus(String status);
+void setupOTAUpdates();
+// void setupMDNShostname();
 
+void initializeNonVolatileStorage();
 void initializePins();
 void initializeTabs();
 void initializePanels();
-void addDisplayElement(DataPoint *dp, int8_t panel, String label, String pre = "", String suf = "");
-void addUpDownDisplayElement(DataPoint *dp, int8_t panel, String label, String pre = "", String suf = "");
+DisplayElement* addDisplayElement(DataPoint *dp, int8_t panel, String label, String pre = "", String suf = "");
+DisplayElement* addUpDownDisplayElement(DataPoint *dp, int8_t panel, String label, String pre = "", String suf = "");
 // void addButtonDisplayElement(DataPoint *dp, int8_t panel, String btnTxt,
 //                              String altTxt = "", String label = "");
-void addButtonDisplayElement(DataPoint *dp, int8_t panel, 
-                             std::vector<ButtonState *>* buttonStates);
+DisplayElement* addButtonDisplayElement(DataPoint *dp, int8_t panel,
+                                        std::vector<ButtonState *> *buttonStates);
+void initializeInteractivity();
+void initializeDoorState();
+void initializeDayorNight();
+
+void updateSystemTime();
+void resetDefaultSettings();
 
 void drawMainUI();
 void drawTabs();
@@ -104,11 +105,16 @@ void drawSysTime();
 void updateNightHours();
 void updateLightLevels();
 void testFunction();
+void updateActiveDoorSensors();
 
 void ensureValidTouchCalibration();
 void touch_calibrate();
 void handleTouchInput();
 void checkDoorSensors();
+
+void doSunsetJobs();
+void doSunriseJobs();
+void doFauxSunriseJobs();
 
 void turnNightLightOn();
 void turnNightLightOff();
@@ -116,6 +122,8 @@ void turnNightLightOff();
 void turnMainLightOn();
 void turnMainLightOff();
 
+void lockDoor(); //testing
+void unlockDoor();  //testing
 void openDoor();
 void closeDoor();
 void manualHaltDoor();
@@ -130,9 +138,11 @@ void calcByLight();
 void calcByTime();
 
 void updateTemperatures();
+void readTemperatures();
 
 void startSpray();
 void stopSpray();
+void enableSpray();
 
 const uint8_t numTabs = 4;
 char tabLabel[numTabs][8] = {"General", "Power", "Time", "Temp"};
@@ -154,6 +164,7 @@ uint8_t statusLineSize;
 uint8_t statusFontHeight;
 char statusBuffer[3][15] = {"", "", ""};
 uint8_t connectionAttempts;
+// bool readyForOTA;
 
 time_t now; // this is the seconds since Epoch (1970) - UTC
 struct tm tm;      // the structure tm holds time information in a more convenient way *
@@ -163,15 +174,28 @@ unsigned long timeStamp;
 unsigned long lastSecondStamp;
 
 IntData secondsCounter; //testing
+StringData activeDoorSensors;
+BoolData isDay;
 IntData nightLightState;
 std::vector<ButtonState *> nightLightBSs;
+IntData resetDefaultsState;
+std::vector<ButtonState *> resetDefaultsBSs;
+// probably remove the following test functions...
+IntData lockState;
+std::vector<ButtonState *> lockStateBSs;
+// IntData windUpState;
+// std::vector<ButtonState *> windUpStateBSs;
+// IntData windDownState;
+// std::vector<ButtonState *> windDownStateBSs;
 
 DoubleData nextSunset(true);
 DoubleData nextSunrise(true);
-DoubleData fauxSunrise(true);
+DoubleData nextFauxSunrise(true);
 IntData idealNight(true);
 IntData artificialNight(true);
 IntData lightCutoff;
+Utility::RollingAverage avgSunsetLightLevel(10);
+DisplayElement* lightCutoffDE;
 IntData currentLight;
 StringData doorStatus;
 StringData doorSensorStatus;
@@ -181,6 +205,7 @@ IntData doorState;
 std::vector<ButtonState *> doorBSs;
 IntData resetDoorSensorsState;
 std::vector<ButtonState *> resetDoorSensorsBSs;
+DisplayElement *resetDoorSensorsDE;
 IntData timeOrLightState;
 std::vector<ButtonState *> timeOrLightBSs;
 
@@ -194,16 +219,31 @@ std::vector<ButtonState *> sprayBSs;
 
 
 bool day;
+bool fauxDay;
+unsigned long nightStart = 0;
 bool openingDoor;
 bool closingDoor;
+bool doorOverride;
 bool doorLastOpening;
 unsigned long doorStartTime;
+uint16_t doorOpeningFollowThrough = 2800; // ms
+Utility::RollingAverage doorOpeningTimes(10);
+IntData avgDoorOpeningTime;
+uint16_t doorClosingFollowThrough = 4500; // ms
+Utility::RollingAverage doorClosingTimes(10);
+IntData avgDoorClosingTime;
 unsigned long doorTimeout = 10000; // stop trying to move door if 10 seconds have passed withour success
+bool sprayDisabled;
 
 void setup()
 {
-  // Use serial port
+  // Use serial0  for Serial Monitor, legacy baud rate should be safe to change
   Serial.begin(9600);
+
+  // VE_direct communication
+  Serial2.begin(19200);
+
+  // SPI.begin(TFT_SCLK, TFT_MISO, TFT_MOSI, TFT_CS);
 
   // Initialise the TFT screen
   tft.init();
@@ -220,18 +260,13 @@ void setup()
   statusX = maxWidth = tft.width();
   statusLineSize = (tft.width() - clockPadding) / tft.textWidth("W") - 1; // 14
 
-  // Initialize Non-Volatile Data Storage
-  preferences.begin("ChickenCoop", false);
-  // preferences.clear(); //remove this
-  idealNight.makeDataPersist("idealNight", 540);
-  artificialNight.makeDataPersist("artificialNight", 660);
-  lightCutoff.makeDataPersist("lightCutoff", 150);
-  timeOrLightState.makeDataPersist("TorLstate", false);
+  initializeNonVolatileStorage();
 
   initializePins();
   openTab = Tabs::Time; // remove this later
   initializeTabs();
   initializePanels();
+  initializeInteractivity();
   tab[openTab].open(true);
   drawMainUI();
 
@@ -251,38 +286,34 @@ void setup()
   }
   Utility::status("WiFi connected");
 */
-
-  // not waiting for the wifi to finish connecting means we start with erroneous time
-  // but it should fix within a few minutes of wifi connecting
-  configTime(0, 0, MY_NTP_SERVER); // 0, 0 because we will use TZ in the next line
-  setenv("TZ", MY_TZ, 1);          // Set environment variable with your time zone
-  tzset();
+  // might want to remove this to wait for wifi/manual time setting
+  updateSystemTime();
 
   sun.setPosition(LATITUDE, LONGITUDE, DST_OFFSET);
 
   tempSensors.begin();
+  tempSensors.setWaitForConversion(false);
 
   tasker.setInterval(drawSysTime, 1000);
   tasker.setInterval(testFunction, 500);
-  tasker.setInterval(updateNightHours, 5000);  //run this at morning, no tasker
+  tasker.setInterval(updateActiveDoorSensors, 1000);
   tasker.setInterval(updateLightLevels, 1000);
-  tasker.setInterval(updateTemperatures, 5000);
+  tasker.setInterval(updateTemperatures, 30000);
 
   //replace these with tasks / methods
   doorStatus.setValue("Locked Shut");
-  doorSensorStatus.setValue("Nominal");
-  // mainLightOn.setValue(true);
-  // doorOpen.setValue(true);
-  // resetDoorSensors.setValue(true);
-  // basedOnLight.setValue(true);
 
   // lastSecondStamp = millis();
+
+  Utility::status("Version " + (String)VERSION);
 }
 
 //------------------------------------------------------------------------------------------
 
 void loop(void)
 {
+  ArduinoOTA.handle();
+
   if(digitalRead(btnPin) == LOW)
   {
     touch_calibrate();
@@ -292,23 +323,51 @@ void loop(void)
   checkDoorSensors(); 
   handleTouchInput(); //needs to be called last
 
-  // possibly wrap this block in an if statement, with the option to run from light levels
-  double currentTime = Utility::toFractionalMinutes(tm.tm_hour, tm.tm_min, tm.tm_sec);
-  if(tm.tm_year > 100)
+  if(timeOrLightState.getValue() == 0)
+  {
+    if (tm.tm_year > 100)
+    {
+      double currentTime = Utility::toFractionalMinutes(tm.tm_hour, tm.tm_min, tm.tm_sec);
+      // set bool day in setup. Possibly using light levels, otherwise waiting for time to update
+      if (day && currentTime >= nextSunset.getValue())
+      {
+        avgSunsetLightLevel.addData(currentLight.getValue());
+        lightCutoff.setValue(avgSunsetLightLevel.getAverage());
+        doSunsetJobs();
+      }
+      else if (!day && currentTime >= nextSunrise.getValue() && 
+                currentTime < nextSunset.getValue())
+      {
+        doSunriseJobs();
+      }
+      else if (!(day || fauxDay) && currentTime >= nextFauxSunrise.getValue() && 
+                currentTime < nextSunset.getValue())
+      {
+        doFauxSunriseJobs();
+      }
+    }
+  }
+  else
   {
     // set bool day in setup. Possibly using light levels, otherwise waiting for time to update
-    if(day && currentTime >= nextSunset.getValue())
+    if (day && currentLight.getValue() < lightCutoff.getValue())
     {
-      // Do Sunset Jobs
+      doSunsetJobs();
     }
-    else if (!day && currentTime >= nextSunrise.getValue())
+    else if (!day && currentLight.getValue() > lightCutoff.getValue() &&
+              (timeStamp - nightStart > 7 * 60 * 60000 || nightStart == 0)) // atleast 7 hours of night
     {
-      // Do Sunrise Jobs
+      doSunriseJobs();
     }
-    else if (!day && currentTime >= fauxSunrise.getValue())
+    else if (!(day || fauxDay) && timeStamp - nightStart >= artificialNight.getValue() * 60000)
     {
-      // do Supplemental Lighting jobs
+      doFauxSunriseJobs();
     }
+  }
+
+  if(outsideTemp.getValue() >= tempCutoff.getValue() && !sprayDisabled)
+  {
+    startSpray();
   }
 
   // if (timeStamp - lastSecondStamp > 1000)
@@ -322,15 +381,55 @@ void loop(void)
 
 //------------------------------------------------------------------------------------------
 
+void initializeNonVolatileStorage()
+{
+  // Initialize Non-Volatile Data Storage
+  preferences.begin("ChickenCoop", false);
+  // preferences.clear(); // uncomment to reset to defaults, probably put this behind a button
+  
+  idealNight.makeDataPersist("idealNight", 540);
+  artificialNight.makeDataPersist("artificialNight", 660);
+  lightCutoff.makeDataPersist("lightCutoff", 150);
+  avgSunsetLightLevel.initializeData(lightCutoff.getValue());
+  doorSensorStatus.makeDataPersist("doorSensorStatus", "Nominal");
+  timeOrLightState.makeDataPersist("TorLstate", false);
+
+  tempCutoff.makeDataPersist("tempCutoff", 100);
+  sprayDuration.makeDataPersist("sprayDuration", 2);
+  sprayCooldown.makeDataPersist("sprayCooldown", 20);
+
+  // Uncomment when in situ
+  avgDoorOpeningTime.makeDataPersist("avgDoorOpen", 45000);
+  // avgDoorOpeningTime.setValue(5000);  //remove
+  doorOpeningTimes.initializeData(avgDoorOpeningTime.getValue());
+  avgDoorClosingTime.makeDataPersist("avgDoorClose", 45000);
+  // avgDoorClosingTime.setValue(5000); //remove
+  doorClosingTimes.initializeData(avgDoorClosingTime.getValue());
+}
+
 void initializePins()
 {
-  pinMode(lampPin, OUTPUT);
+  // ADC prPin doesn't require initialization
+  // and tempPin is initialized by the OneWire constructor
   pinMode(btnPin, INPUT_PULLUP);
+  pinMode(openDoorSensorPin, INPUT);
+  pinMode(closedDoorSensorPin, INPUT);
+
+  pinMode(lampPin, OUTPUT);
+  pinMode(nightLightPin, OUTPUT);
+  pinMode(bistroLightPin, OUTPUT);
+  pinMode(lockPin, OUTPUT);
+  digitalWrite(lockPin, HIGH);
+  pinMode(sprayPin, OUTPUT);
+  digitalWrite(sprayPin, HIGH);
+  pinMode(fanPin, OUTPUT);
+  digitalWrite(fanPin, HIGH);
+  pinMode(motFwd, OUTPUT);
+  pinMode(motRev, OUTPUT);
 }
 
 void initializeTabs()
 {
-  // int tabColor;
   for (uint8_t i = 0; i < numTabs; i++)
   {
     uint8_t tabWidth = tft.width() / numTabs;
@@ -339,7 +438,6 @@ void initializeTabs()
                      TFT_WHITE, TFT_LIGHTGREY, TFT_DARKGREY, TFT_WHITE,
                      tabLabel[i], (GFXfont *)ACTIVE_FONT, 
                      (GFXfont *)INACTIVE_FONT, TAB_TEXTSIZE);
-    // tab[i].drawTab();
   }
 }
 
@@ -347,9 +445,28 @@ void initializePanels()
 {
   // *** General Panel Display Elements ***
   addDisplayElement(&secondsCounter, Tabs::General, "Seconds:");
+  addDisplayElement(&activeDoorSensors, Tabs::General, "Active Door Sensors");
+  addDisplayElement(&isDay, Tabs::General, "Day?:");
   nightLightBSs.push_back(new ButtonState(turnNightLightOn, "Night Light Off", "Turn On")); // 0
   nightLightBSs.push_back(new ButtonState(turnNightLightOff, "Night Light On", "Turn Off")); // 1
   addButtonDisplayElement(&nightLightState, Tabs::General, &nightLightBSs);
+  lockStateBSs.push_back(new ButtonState(unlockDoor, "Door Locked", "Unlock"));  // 0
+  lockStateBSs.push_back(new ButtonState(lockDoor, "Door Unlocked", "Lock")); // 1
+  addButtonDisplayElement(&lockState, Tabs::General, &lockStateBSs);
+  // windUpStateBSs.push_back(new ButtonState(windUp, "Wind Up"));  // 0
+  // windUpStateBSs.push_back(new ButtonState(stopDoor, "Stop")); // 1
+  // addButtonDisplayElement(&windUpState, Tabs::General, &windUpStateBSs);
+  // windDownStateBSs.push_back(new ButtonState(windDown, "Wind Down"));  // 0
+  // windDownStateBSs.push_back(new ButtonState(stopDoor, "Stop")); // 1
+  // addButtonDisplayElement(&windDownState, Tabs::General, &windDownStateBSs);  
+  doorBSs.push_back(new ButtonState(openDoor, "Door Closed", "Open Door"));  // 0
+  doorBSs.push_back(new ButtonState(manualHaltDoor, "Door Opening", "Stop Door")); // 1
+  doorBSs.push_back(new ButtonState(closeDoor, "Door Open", "Close Door"));        // 2
+  doorBSs.push_back(new ButtonState(manualHaltDoor, "Door Closing", "Stop Door")); // 3
+  doorBSs.push_back(new ButtonState(returnDoor, "Door Stopped", "Return Door"));   // 4
+  addButtonDisplayElement(&doorState, Tabs::General, &doorBSs);
+  resetDefaultsBSs.push_back(new ButtonState(resetDefaultSettings, "Reset To Defaults"));
+  addButtonDisplayElement(&resetDefaultsState, Tabs::General, &resetDefaultsBSs);
 
   // *** Power Panel Display Elements ***
   // TBD, almost all basic DisplayElements
@@ -360,21 +477,21 @@ void initializePanels()
   addDisplayElement(&nextSunrise, Tabs::Time, "Sunrise");
   addUpDownDisplayElement(&idealNight, Tabs::Time, "Ideal Night");
   addUpDownDisplayElement(&artificialNight, Tabs::Time, "Achieved Night");
-  addUpDownDisplayElement(&lightCutoff, Tabs::Time, "Light Cutoff");
+  lightCutoffDE = addUpDownDisplayElement(&lightCutoff, Tabs::Time, "Light Cutoff");
   addDisplayElement(&currentLight, Tabs::Time, "Light Level");
-  addDisplayElement(&doorStatus, Tabs::Time, "Door");
+  // addDisplayElement(&doorStatus, Tabs::Time, "Door");
   addDisplayElement(&doorSensorStatus, Tabs::Time, "Door Sensors");
   mainLightBSs.push_back(new ButtonState(turnMainLightOn, "Main Light Off", "Turn On")); // 0
   mainLightBSs.push_back(new ButtonState(turnMainLightOff, "Main Light On", "Turn Off")); // 1
   addButtonDisplayElement(&mainLightState, Tabs::Time, &mainLightBSs);
-  doorBSs.push_back(new ButtonState(openDoor, "Door Closed", "Open Door"));  // 0
-  doorBSs.push_back(new ButtonState(manualHaltDoor, "Door Opening", "Stop Door")); // 1
-  doorBSs.push_back(new ButtonState(closeDoor, "Door Open", "Close Door")); // 2
-  doorBSs.push_back(new ButtonState(manualHaltDoor, "Door Closing", "Stop Door")); // 3
-  doorBSs.push_back(new ButtonState(returnDoor, "Door Stopped", "Return Door")); // 4
+  // doorBSs.push_back(new ButtonState(openDoor, "Door Closed", "Open Door"));  // 0
+  // doorBSs.push_back(new ButtonState(manualHaltDoor, "Door Opening", "Stop Door")); // 1
+  // doorBSs.push_back(new ButtonState(closeDoor, "Door Open", "Close Door")); // 2
+  // doorBSs.push_back(new ButtonState(manualHaltDoor, "Door Closing", "Stop Door")); // 3
+  // doorBSs.push_back(new ButtonState(returnDoor, "Door Stopped", "Return Door")); // 4
   addButtonDisplayElement(&doorState, Tabs::Time, &doorBSs);
   resetDoorSensorsBSs.push_back(new ButtonState(resetDoorSensors, "Reset Door Sensors"));
-  addButtonDisplayElement(&resetDoorSensorsState, Tabs::Time, &resetDoorSensorsBSs);
+  resetDoorSensorsDE = addButtonDisplayElement(&resetDoorSensorsState, Tabs::Time, &resetDoorSensorsBSs);
   timeOrLightBSs.push_back(new ButtonState(calcByLight, "Night From Time", "Use Light")); // 0
   timeOrLightBSs.push_back(new ButtonState(calcByTime, "Night From Light", "Use Time")); // 1
   addButtonDisplayElement(&timeOrLightState, Tabs::Time, &timeOrLightBSs);
@@ -391,27 +508,94 @@ void initializePanels()
 
 }
 
-void addDisplayElement(DataPoint *dp, int8_t panel, String label, String pre, String suf)
+DisplayElement *addDisplayElement(DataPoint *dp, int8_t panel, String label, String pre, String suf)
 {
   DisplayElement *de = new DisplayElement(&tft, dp, label, 0, 
     panelTop + 20 + (deHeight * panelDEs[panel].size()), maxWidth, deHeight, pre, suf);
   panelDEs[panel].push_back(de);
+  return de;
 }
 
-void addUpDownDisplayElement(DataPoint *dp, int8_t panel, String label, String pre, String suf)
+DisplayElement* addUpDownDisplayElement(DataPoint *dp, int8_t panel, String label, String pre, String suf)
 {
   DisplayElement *de = new UpDownElement(&tft, dp, label, 0,
     panelTop + 20 + (deHeight * panelDEs[panel].size()), maxWidth, deHeight, pre, suf);
   panelDEs[panel].push_back(de);
+  return de;
 }
 
-void addButtonDisplayElement(DataPoint* dp, int8_t panel, std::vector<ButtonState*>* buttonStates)
+DisplayElement *addButtonDisplayElement(DataPoint *dp, int8_t panel, std::vector<ButtonState *> *buttonStates)
 {
   buttonCounter[panel] += 1;
   DisplayElement *de = new ButtonElement(&tft, dp, 42 + 78 * (buttonCounter[panel] - 1), 
                                           buttonYpos, 72, 64, buttonStates);
   panelDEs[panel].push_back(de);
+  return de;
 }
+
+void initializeInteractivity()
+{
+  // lightCutoff should only be interactive if timeOrLight = 1 (light)
+  lightCutoffDE->setInteractivity(timeOrLightState.getValue() != 0);
+
+  resetDoorSensorsDE->setInteractivity(doorSensorStatus.getValue() != "Nominal");
+}
+
+void initializeDayorNight()
+{
+  if(timeOrLightState.getValue() == 0) //time
+  {
+    double currentTime = Utility::toFractionalMinutes(tm.tm_hour, tm.tm_min, tm.tm_sec);
+    if (currentTime >= nextSunrise.getValue() && currentTime < nextSunset.getValue())
+    {
+      day = true;
+      isDay.setValue(true);
+    }
+    else
+    {
+      day = false;
+      isDay.setValue(false);
+    }
+  }
+  else
+  {
+    if(currentLight.getValue() >= lightCutoff.getValue())
+    {
+      day = true;
+      isDay.setValue(true);
+    }
+    else
+    {
+      day = false;
+      isDay.setValue(false);
+    }
+  }
+}
+
+void initializeDoorState()
+{
+  if (digitalRead(openDoorSensorPin) == LOW && digitalRead(closedDoorSensorPin) == HIGH)
+  {
+    doorState.setValue(2);
+  }
+  else if (digitalRead(closedDoorSensorPin) == LOW && digitalRead(openDoorSensorPin) == HIGH)
+  {
+    doorState.setValue(0);
+  }
+  else
+  {
+    //Error state, needs better handling.  For now assume door is in right spot
+    if(day)
+    {
+      doorState.setValue(2);
+    }
+    else
+    {
+      doorState.setValue(0);
+    }
+  }
+}
+
 
 // void addButtonDisplayElement(DataPoint* dp, int8_t panel, String btnTxt, 
 //                               String altTxt, String label)
@@ -543,29 +727,74 @@ void checkDoorSensors()
 {
   if (openingDoor)
   {
-    // Break these into nested ifs to check if this was a good run for the rolling average
-    if (/*digitalRead(openDoorSensorPin) == LOW || */timeStamp - doorStartTime >= doorTimeout)
+    // Broke these into nested ifs to check if this was a good run for the rolling average
+    if (timeStamp - doorStartTime >= doorTimeout)
     {
-      tasker.setTimeout(stopDoor, 500);
+      stopDoor();
       openingDoor = false;
       doorState.setValue(2);
+      if (doorSensorStatus.getValue() == "!Bottom!" || doorSensorStatus.getValue() == "!Both!")
+      {
+        doorSensorStatus.setValue("!Both!");
+      }
+      else
+      {
+        doorSensorStatus.setValue("!Top!");
+      }
+      resetDoorSensorsDE->setInteractivity(true);
+      doorOverride = false;
+    }
+    else if (digitalRead(openDoorSensorPin) == LOW)
+    {
+      tasker.setTimeout(stopDoor, doorOpeningFollowThrough);
+      openingDoor = false;
+      doorState.setValue(2);
+      if (!doorOverride)
+      {
+        doorOpeningTimes.addData((double) (millis() - doorStartTime + doorOpeningFollowThrough));
+        avgDoorOpeningTime.setValue((int)doorOpeningTimes.getAverage());
+      }
+      doorOverride = false;
     }
   }  
   else if (closingDoor)
   {
-    if (/*digitalRead(closedDoorSensorPin) == LOW || */timeStamp - doorStartTime >= doorTimeout)
+    if (timeStamp - doorStartTime >= doorTimeout)
     {
-      tasker.setTimeout(stopDoor, 5500);
+      stopDoor();
       closingDoor = false;
       doorState.setValue(0);
+      if (doorSensorStatus.getValue() == "!Top!" || doorSensorStatus.getValue() == "!Both!")
+      {
+        doorSensorStatus.setValue("!Both!");
+      }
+      else
+      {
+        doorSensorStatus.setValue("!Bottom!");
+      }
+      resetDoorSensorsDE->setInteractivity(true);
+      doorOverride = false;
+    }
+    else if (digitalRead(closedDoorSensorPin) == LOW)
+    {
+      tasker.setTimeout(stopDoor, doorClosingFollowThrough);
+      closingDoor = false;
+      doorState.setValue(0);
+      if (!doorOverride)
+      {
+        doorClosingTimes.addData((double)(millis() - doorStartTime + doorClosingFollowThrough));
+        avgDoorClosingTime.setValue((int)doorClosingTimes.getAverage());
+      }
+      doorOverride = false;
     }
   }
 }
 
 void ensureValidTouchCalibration()
 {
+  preferences.end();
+  preferences.begin("TouchCal", false);
   uint16_t calData[5];
-  // bool calDataOK;
 
   if (preferences.isKey("calData") && preferences.getBytesLength("calData") == 10)
   {
@@ -576,12 +805,15 @@ void ensureValidTouchCalibration()
   {
     touch_calibrate();
   }
+  preferences.end();
+  preferences.begin("ChickenCoop", false);
 }
 
 void touch_calibrate()
-{
+{  
+  preferences.end();
+  preferences.begin("TouchCal", false);
   uint16_t calData[5];
-  // uint8_t calDataOK = 0;
   if (preferences.isKey("calData"))
   {
     preferences.remove("calData");
@@ -606,7 +838,17 @@ void touch_calibrate()
   // store data
   preferences.putBytes("calData", calData, 10);
 
+  preferences.end();
+  preferences.begin("ChickenCoop", false);
+
   drawMainUI();
+}
+
+void updateSystemTime()
+{
+  configTime(0, 0, MY_NTP_SERVER); // 0, 0 because we will use TZ in the next line
+  setenv("TZ", MY_TZ, 1);          // Set environment variable with your time zone
+  tzset();
 }
 
 /*
@@ -685,12 +927,50 @@ void touch_calibrate()
 */
 //------------------------------------------------------------------------------------------
 
-// might need to check if (tm_year != 69) before running
+void doSunsetJobs()
+{
+  nightStart = timeStamp;
+  closeDoor();
+  day = false;
+  isDay.setValue(false);
+}
+
+void doSunriseJobs()
+{
+  openDoor();
+  day = true;
+  isDay.setValue(true);
+  tasker.setTimeout(updateNightHours, 300000); //update in 5 minutes
+  turnMainLightOff();
+  fauxDay = false;
+}
+
+void doFauxSunriseJobs()
+{
+  fauxDay = true;
+  turnMainLightOn();
+  artificialNight.setValue(max(idealNight.getValue(), artificialNight.getValue() - 3));
+}
+
 void updateNightHours()
 {
+  if (tm.tm_year < 100)
+  {
+    tasker.setTimeout(updateNightHours, 5000);
+    return;
+  }
+
   sun.setCurrentDate(1900 + tm.tm_year, tm.tm_mon, tm.tm_mday);
-  nextSunset.setValue(sun.calcNauticalSunset());
-  nextSunrise.setValue(sun.calcNauticalSunrise());
+  double set = sun.calcNauticalSunset();
+  double rise = sun.calcNauticalSunrise();
+  if (tm.tm_isdst > 0)
+  {
+    set += 60;
+    rise += 60;
+  }
+  nextSunset.setValue(set);
+  nextSunrise.setValue(rise);
+  nextFauxSunrise.setValue(((int)set + artificialNight.getValue()) % 1440);
 }
 
 void updateLightLevels()
@@ -701,6 +981,38 @@ void updateLightLevels()
 void testFunction()
 {
   secondsCounter.setValue(tm.tm_sec);
+}
+
+void resetDefaultSettings()
+{
+  preferences.clear();
+  ESP.restart();
+}
+
+void updateActiveDoorSensors()
+{
+  if (digitalRead(openDoorSensorPin) == LOW)
+  {
+    if(digitalRead(closedDoorSensorPin) == LOW)
+    {
+      activeDoorSensors.setValue("!Both!");
+    }
+    else
+    {
+      activeDoorSensors.setValue("Top");
+    }
+  }
+  else
+  {
+    if(digitalRead(closedDoorSensorPin) == HIGH)
+    {
+      activeDoorSensors.setValue("!None!");
+    }
+    else
+    {
+      activeDoorSensors.setValue("Bottom");
+    }
+  }
 }
 
 void turnNightLightOn()
@@ -727,31 +1039,76 @@ void turnMainLightOff()
   mainLightState.setValue(0);
 }
 
+//probably remove these, testing purposes
+void unlockDoor()
+{
+  digitalWrite(lockPin, LOW);
+  lockState.setValue(1);
+}
+
+void lockDoor()
+{
+  digitalWrite(lockPin, HIGH);
+  lockState.setValue(0);
+}
+
 void openDoor()
 {
   digitalWrite(lockPin, LOW);      // unlock
-  tasker.setTimeout(windUp, 200); // begin raising door after 0.2 seconds
-  doorStartTime = millis();
+  tasker.setTimeout(windUp, 200); // begin raising door after 0.2 seconds (for lock)
+  // doorStartTime = millis();  // now setting in windUp
   doorState.setValue(1);
-  openingDoor = true;
+  // openingDoor = true;   //now in windup
   doorLastOpening = true;
+  if (!doorOverride)
+  {
+    doorTimeout = avgDoorOpeningTime.getValue();
+  }
 }
 
 void closeDoor()
 {
   digitalWrite(lockPin, LOW);        // unlock
   tasker.setTimeout(windDown, 200); // begin closing door after 0.2 seconds
-  doorStartTime = millis();
+  // doorStartTime = millis();  // now setting in windDown
   doorState.setValue(3);
-  closingDoor = true;
+  // closingDoor = true;  // now setting in windDown
   doorLastOpening = false;
+  if (!doorOverride)
+  {
+    doorTimeout = avgDoorClosingTime.getValue();
+  }
 }
 
 // manual override door stop function
 void manualHaltDoor()
 {
   stopDoor();
-  // set a WARNING flag, do not use value for rolling average
+  if (!doorOverride)
+  {
+    // an approximation, might want to modify with a constant for irl conditions
+    doorTimeout = millis() - doorStartTime; 
+    //actually this is probably unnecessary
+  }
+  else
+  {
+    if (doorLastOpening)
+    {
+      // how long it takes to close 
+      // minus how long it was going to take to raise 
+      // plus how long we were moving
+      doorTimeout = avgDoorClosingTime.getValue() 
+                    - doorTimeout 
+                    + (millis() - doorStartTime);
+    }
+    else
+    {
+      doorTimeout = avgDoorOpeningTime.getValue() 
+                    - doorTimeout 
+                    + (millis() - doorStartTime);
+    }
+  }
+  doorOverride = true;
   doorState.setValue(4);
 }
 
@@ -773,38 +1130,52 @@ void stopDoor()
   digitalWrite(motFwd, LOW);
   digitalWrite(motRev, LOW);
   digitalWrite(lockPin, HIGH);
+  // windUpState.setValue(0); // probs remove, testing
+  // windDownState.setValue(0); // probs remove, testing
 }
 
 void windUp()
 {
   digitalWrite(motFwd, HIGH);
-  // openingDoor = true;
+  doorStartTime = millis();
+  openingDoor = true;
+  // windUpState.setValue(1); // probs remove, testing
 }
 
 void windDown()
 {
   digitalWrite(motRev, HIGH);
-  // closingDoor = true;
+  doorStartTime = millis();
+  closingDoor = true;
+  // windDownState.setValue(1); //probs remove, testing
 }
 
 void resetDoorSensors()
 {
   doorSensorStatus.setValue("Nominal");
+  resetDoorSensorsDE->setInteractivity(false);
 }
 
 void calcByLight()
 {
   timeOrLightState.setValue(1);
+  lightCutoffDE->setInteractivity(true);
 }
 
 void calcByTime()
 {
   timeOrLightState.setValue(0);
+  lightCutoffDE->setInteractivity(false);
 }
 
 void updateTemperatures()
 {
-  tempSensors.requestTemperatures();
+    tempSensors.requestTemperatures();
+    tasker.setTimeout(readTemperatures, 1000);
+}
+
+void readTemperatures()
+{
   insideTemp.setValue(tempSensors.getTempFByIndex(0));
   outsideTemp.setValue(tempSensors.getTempFByIndex(1));
 }
@@ -814,13 +1185,19 @@ void startSpray()
   // Set relevant pin to start sprayer
   sprayState.setValue(1);
   tasker.setTimeout(stopSpray, 60000 * sprayDuration.getValue());
+  sprayDisabled = true;
 }
 
 void stopSpray()
 {
   // Set relevant pin to stop sprayer
   sprayState.setValue(0);
-  // probably toggle a bool to tell loop when it can spray again
+  tasker.setTimeout(enableSpray, 60000 * sprayCooldown.getValue());
+}
+
+void enableSpray()
+{
+  sprayDisabled = false;
 }
 
 ///////////////////////////////////////////////////////
@@ -836,7 +1213,7 @@ void wifiStart()
 void wifiConnect()
 {
   // WiFi.persistent(false);
-  // WiFi.mode(WIFI_STA);
+  WiFi.mode(WIFI_STA);
   WiFi.begin(STASSID, STAPSK);
   tasker.setInterval(wifiAttemptConnection, 100);
 }
@@ -845,16 +1222,24 @@ void wifiAttemptConnection()
 {
   if (WiFi.status() != WL_CONNECTED)
   {
-    if (connectionAttempts > 200)
+  
+    if(connectionAttempts > 210)
     {
-      wifiStatus("Retrying Wifi");
       WiFi.disconnect();
       WiFi.begin(STASSID, STAPSK);
       connectionAttempts = 0;
     }
+    
     else
     {
-      wifiStatus(connectionAttempts % 2 ? "Connecting  " : "Connecting .");
+      if (connectionAttempts > 200)
+      {
+        wifiStatus("Retrying Wifi");
+      }
+      else
+      {
+        wifiStatus(connectionAttempts % 2 ? "Connecting  " : "Connecting .");
+      }
       connectionAttempts++;
     }
   }
@@ -862,12 +1247,23 @@ void wifiAttemptConnection()
   {
     wifiStatus("Wifi Connected");
     connectionAttempts = 0;
+    
+    updateSystemTime();
+    // tasker.setTimeout(updateNightHours, 5000);
+    // tasker.setTimeout(initializeDayorNight, 6000); //possibly refactor as a single function
+    // tasker.setTimeout(initializeDoorState, 7000); //that can be called with/out WiFi
+    updateNightHours();
+    initializeDayorNight();
+    initializeDoorState();
+    // setupMDNShostname();
+    setupOTAUpdates();
     tasker.cancel(wifiAttemptConnection);
-  }
+    }
 }
 
 void wifiDisconnectCallback(WiFiEvent_t event, WiFiEventInfo_t info)
 {
+  // readyForOTA = false;
   wifiConnect();
 }
 
@@ -888,3 +1284,51 @@ void wifiStatus(String status)
   tft.setTextSize(tempSize);
   tft.setTextPadding(tempPadding);
 }
+
+void setupOTAUpdates()
+{
+  //cribbed from ArduinoOTA/examples/basicOTA.ino
+  ArduinoOTA.setHostname("ChickenCoop");
+
+  ArduinoOTA
+      .onStart([]()
+               {
+      String type;
+      if (ArduinoOTA.getCommand() == U_FLASH)
+        type = "sketch";
+      else // U_SPIFFS
+        type = "filesystem";
+
+      // NOTE: if updating SPIFFS this would be the place to unmount SPIFFS using SPIFFS.end()
+      Serial.println("Start updating " + type); })
+      .onEnd([]()
+             { Serial.println("\nEnd"); })
+      .onProgress([](unsigned int progress, unsigned int total)
+                  { Serial.printf("Progress: %u%%\r", (progress / (total / 100))); })
+      .onError([](ota_error_t error)
+               {
+      Serial.printf("Error[%u]: ", error);
+      if (error == OTA_AUTH_ERROR) Serial.println("Auth Failed");
+      else if (error == OTA_BEGIN_ERROR) Serial.println("Begin Failed");
+      else if (error == OTA_CONNECT_ERROR) Serial.println("Connect Failed");
+      else if (error == OTA_RECEIVE_ERROR) Serial.println("Receive Failed");
+      else if (error == OTA_END_ERROR) Serial.println("End Failed"); });
+
+  ArduinoOTA.setPassword("Xb476X3aU");
+  ArduinoOTA.begin();
+  //probably this flag is redundant, 
+  // readyForOTA = true;
+}
+
+// void setupMDNShostname()
+// {
+//   if (!MDNS.begin("ChickenCoop"))
+//   {
+//     Serial.println("Error setting up MDNS responder!");
+//     tasker.setTimeout(setupMDNShostname, 1000);
+//   }
+//   else
+//   {
+//     // Utility::status("Set Hostname");
+//   }
+// }

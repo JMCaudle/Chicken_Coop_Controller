@@ -1,0 +1,21 @@
+Clean up door/day initialization
+
+Get interface ready for reading from Victron
+
+Hook up Power Panel
+  -compute State of Charge
+  -possibly graph voltage etc over time
+
+Hook Up General Panel
+  -most relevant DataPoints
+  -possibly move over mainLight control
+  -eventually a button to change wifi login
+  -maybe also a way to manually set time
+
+A confirmation feature for resetting to defaults and other dangerous functions
+
+Professionalize assets ie.. 
+  -tasker -> freeRTOS
+  -String() -> std::string
+
+Explore multi-threading optimizations

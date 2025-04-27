@@ -21,6 +21,7 @@ public:
   virtual void drawLabel();
   virtual void drawValue(String val);
 
+  void setInteractivity(bool interactive);
   void noTouch();
   void handleButtonTouchInput(uint16_t t_x, uint16_t t_y);
   CustomButton *buttons[2] = {nullptr, nullptr};
@@ -31,8 +32,8 @@ protected:
   String _label, _prefix, _suffix;
   uint16_t _x, _y, _w, _h;
   uint8_t _dataPadding;
+  bool _interactive;
 };
-
 
 class UpDownElement : public DisplayElement
 {
@@ -51,8 +52,8 @@ protected:
 class ButtonElement : public DisplayElement
 {
 public:
-  ButtonElement(TFT_eSPI *gfx, DataPoint *dp, int x, int y, int w, int h,
-                String btnText, String btnAlt = "", String label = "");
+  // ButtonElement(TFT_eSPI *gfx, DataPoint *dp, int x, int y, int w, int h,
+  //               String btnText, String btnAlt = "", String label = "");
   ButtonElement(TFT_eSPI *gfx, DataPoint *dp, int x, int y, int w, int h,
                 std::vector<ButtonState*>* btnStates);
   CustomButton btn;

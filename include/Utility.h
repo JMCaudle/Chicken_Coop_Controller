@@ -29,29 +29,38 @@ namespace Utility
     RollingAverage(int windowSize) : 
       windowSize_(windowSize), 
       data_(windowSize, 0.0), 
-      sum_(0.0), 
       index_(0) {}
+
+    void initializeData(double initialValue)
+    {
+      for(uint8_t i = 0; i < windowSize_; i++)
+      {
+        data_[i] = initialValue;
+      }
+    }
 
     void addData(double value)
     {
-      sum_ -= data_[index_];                // Subtract the oldest value
       data_[index_] = value;                // Add the new value
-      sum_ += value;                        // Update the sum
       index_ = (index_ + 1) % windowSize_; // Move to the next index in the circular buffer
     }
 
     double getAverage() const
     {
-      return sum_ / windowSize_;
+      double sum = 0;
+      for (uint8_t i = 0; i < windowSize_; i++)
+      {
+        sum += data_[i];
+      }
+      return sum / windowSize_;
     }
 
   private:
     int windowSize_;
     std::vector<double> data_;
-    double sum_;
     int index_;
   };
-  
+
   void setPanelTextSettings();
 
   String minutesToTimeString(int min);
