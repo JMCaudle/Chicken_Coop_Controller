@@ -45,6 +45,8 @@ public:
 
 private:
   int _value;
+  int _lowValue;
+  int _highValue;
   bool _minutes;
 };
 
@@ -59,6 +61,8 @@ public:
 
 private:
   float _value;
+  float _lowValue;
+  float _highValue;
 };
 
 class DoubleData : public DataPoint
@@ -86,6 +90,7 @@ public:
 
 private:
   String _value;
+  String _idealValue;
 };
 
 #endif

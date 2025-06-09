@@ -10,10 +10,8 @@ DataPoint::DataPoint()
 
 void DataPoint::makeDataPersist(String key)
 {
-  // Utility::status(key);
   key.remove(10);
   _key = key;
-  // Utility::status(_key);
 }
 
 void DataPoint::processValue(){}
@@ -50,7 +48,7 @@ void BoolData::processValue()
 {
   if (onChanged != nullptr)
   {
-    onChanged((String)_value);
+    onChanged(_value ? "True" : "False");
   }
 }
 

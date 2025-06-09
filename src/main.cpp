@@ -14,8 +14,8 @@ make your own configuration.h file, ie...
 // #include "FS.h"
 #include <Preferences.h>
 #include <ArduinoOTA.h>
-#include <ESPmDNS.h>
-#include <WiFiUdp.h>
+#include <ESPmDNS.h> //test removing
+#include <WiFiUdp.h> //test removing
 
 #include <SPI.h>
 #include <TFT_eSPI.h> // Hardware-specific library
@@ -28,6 +28,7 @@ make your own configuration.h file, ie...
 #include <functional>
 #include <vector>
 
+#include "VeDirectFrameHandler.h"
 #include "Tab.h"
 #include "DataPoint.h"
 #include "DisplayElement.h"
@@ -37,12 +38,13 @@ TFT_eSPI tft = TFT_eSPI(); // Invoke custom library
 Tasker tasker;
 SunSet sun;
 Preferences preferences;
+VeDirectFrameHandler myVE;
 
 #define TAB_TEXTSIZE 1
 
 #define MY_NTP_SERVER "pool.ntp.org"
 
-#define VERSION "2.2.70"
+#define VERSION "2.3.6"
 //------------------------------------------------------------------------------------------
 
 //input pins
@@ -66,7 +68,8 @@ struct Tabs
     General,
     Power,
     Time,
-    Temp
+    Temp,
+    Util
   };
 };
 
@@ -92,7 +95,8 @@ DisplayElement* addButtonDisplayElement(DataPoint *dp, int8_t panel,
                                         std::vector<ButtonState *> *buttonStates);
 void initializeInteractivity();
 void initializeDoorState();
-void initializeDayorNight();
+void initializeDayorNightfromTime();
+void initializeDayorNightfromLight();
 
 void updateSystemTime();
 void resetDefaultSettings();
@@ -104,8 +108,12 @@ void drawSysTime();
 
 void updateNightHours();
 void updateLightLevels();
-void testFunction();
+// void testFunction();
 void updateActiveDoorSensors();
+void updateTemperatures();
+void readTemperatures();
+void readVEData();
+void updateVEData();
 
 void ensureValidTouchCalibration();
 void touch_calibrate();
@@ -118,7 +126,8 @@ void doFauxSunriseJobs();
 
 void turnNightLightOn();
 void turnNightLightOff();
-
+void turnBistroLightsOn();
+void turnBistroLightsOff();
 void turnMainLightOn();
 void turnMainLightOff();
 
@@ -137,15 +146,15 @@ void resetDoorSensors();
 void calcByLight();
 void calcByTime();
 
-void updateTemperatures();
-void readTemperatures();
+
 
 void startSpray();
 void stopSpray();
 void enableSpray();
+void swapThermPosition();
 
-const uint8_t numTabs = 4;
-char tabLabel[numTabs][8] = {"General", "Power", "Time", "Temp"};
+const uint8_t numTabs = 5;
+char tabLabel[numTabs][8] = {"Main", "Power", "Time", "Temp", "Utility"};
 TFT_eSPI_Tab tab[numTabs];
 uint16_t maxWidth;
 uint16_t maxHeight;
@@ -164,7 +173,6 @@ uint8_t statusLineSize;
 uint8_t statusFontHeight;
 char statusBuffer[3][15] = {"", "", ""};
 uint8_t connectionAttempts;
-// bool readyForOTA;
 
 time_t now; // this is the seconds since Epoch (1970) - UTC
 struct tm tm;      // the structure tm holds time information in a more convenient way *
@@ -173,20 +181,22 @@ int currentMin = -1;
 unsigned long timeStamp;
 unsigned long lastSecondStamp;
 
-IntData secondsCounter; //testing
+// IntData secondsCounter; //testing
 StringData activeDoorSensors;
 BoolData isDay;
 IntData nightLightState;
 std::vector<ButtonState *> nightLightBSs;
-IntData resetDefaultsState;
-std::vector<ButtonState *> resetDefaultsBSs;
-// probably remove the following test functions...
-IntData lockState;
-std::vector<ButtonState *> lockStateBSs;
-// IntData windUpState;
-// std::vector<ButtonState *> windUpStateBSs;
-// IntData windDownState;
-// std::vector<ButtonState *> windDownStateBSs;
+IntData bistroLightsState;
+std::vector<ButtonState *> bistroLightsBSs;
+
+
+FloatData batCurrent;
+FloatData batVoltage;
+FloatData loadPower;
+FloatData pvPower;
+IntData batCapacity;
+IntData stateOfCharge;
+IntData lastSocPrediction;
 
 DoubleData nextSunset(true);
 DoubleData nextSunrise(true);
@@ -216,9 +226,25 @@ IntData sprayDuration;
 IntData sprayCooldown;
 IntData sprayState;
 std::vector<ButtonState *> sprayBSs;
+BoolData swapThermometerPositions;
+IntData swapThermState;
+std::vector<ButtonState *> swapThermStateBSs;
 
+// possibly remove the following test functions...
+IntData lockState;
+std::vector<ButtonState *> lockStateBSs;
+DisplayElement *lockStateDE;
+IntData windUpState;
+std::vector<ButtonState *> windUpStateBSs;
+DisplayElement *windUpDE;
+IntData windDownState;
+std::vector<ButtonState *> windDownStateBSs;
+DisplayElement *windDownDE;
+IntData resetDefaultsState;
+std::vector<ButtonState *> resetDefaultsBSs;
 
 bool day;
+bool dayInit;
 bool fauxDay;
 unsigned long nightStart = 0;
 bool openingDoor;
@@ -235,6 +261,10 @@ IntData avgDoorClosingTime;
 unsigned long doorTimeout = 10000; // stop trying to move door if 10 seconds have passed withour success
 bool sprayDisabled;
 
+bool batFloat;
+double storedAmpSeconds;
+// float currentThreshold = 0.09; // |I| < this will be ignored
+
 void setup()
 {
   // Use serial0  for Serial Monitor, legacy baud rate should be safe to change
@@ -242,8 +272,7 @@ void setup()
 
   // VE_direct communication
   Serial2.begin(19200);
-
-  // SPI.begin(TFT_SCLK, TFT_MISO, TFT_MOSI, TFT_CS);
+  Serial2.flush();
 
   // Initialise the TFT screen
   tft.init();
@@ -263,7 +292,6 @@ void setup()
   initializeNonVolatileStorage();
 
   initializePins();
-  openTab = Tabs::Time; // remove this later
   initializeTabs();
   initializePanels();
   initializeInteractivity();
@@ -287,23 +315,29 @@ void setup()
   Utility::status("WiFi connected");
 */
   // might want to remove this to wait for wifi/manual time setting
-  updateSystemTime();
+  // updateSystemTime();
 
   sun.setPosition(LATITUDE, LONGITUDE, DST_OFFSET);
+  if(timeOrLightState.getValue() == 1) // light
+  {
+    initializeDayorNightfromLight();
+  }
+
+  initializeDoorState();
 
   tempSensors.begin();
   tempSensors.setWaitForConversion(false);
 
   tasker.setInterval(drawSysTime, 1000);
-  tasker.setInterval(testFunction, 500);
+  // tasker.setInterval(testFunction, 500);
   tasker.setInterval(updateActiveDoorSensors, 1000);
   tasker.setInterval(updateLightLevels, 1000);
-  tasker.setInterval(updateTemperatures, 30000);
+  tasker.setInterval(updateTemperatures, 5000);
 
   //replace these with tasks / methods
-  doorStatus.setValue("Locked Shut");
+  // doorStatus.setValue("Locked Shut");
 
-  // lastSecondStamp = millis();
+  lastSecondStamp = millis();
 
   Utility::status("Version " + (String)VERSION);
 }
@@ -323,58 +357,64 @@ void loop(void)
   checkDoorSensors(); 
   handleTouchInput(); //needs to be called last
 
-  if(timeOrLightState.getValue() == 0)
+  if(dayInit)
   {
-    if (tm.tm_year > 100)
+    if (timeOrLightState.getValue() == 0)
     {
-      double currentTime = Utility::toFractionalMinutes(tm.tm_hour, tm.tm_min, tm.tm_sec);
-      // set bool day in setup. Possibly using light levels, otherwise waiting for time to update
-      if (day && currentTime >= nextSunset.getValue())
+      if (tm.tm_year > 100)
       {
-        avgSunsetLightLevel.addData(currentLight.getValue());
-        lightCutoff.setValue(avgSunsetLightLevel.getAverage());
+        double currentTime = Utility::toFractionalMinutes(tm.tm_hour, tm.tm_min, tm.tm_sec);
+        // set bool day in setup. Possibly using light levels, otherwise waiting for time to update
+        if (day && currentTime >= nextSunset.getValue())
+        {
+          avgSunsetLightLevel.addData(currentLight.getValue());
+          lightCutoff.setValue(avgSunsetLightLevel.getAverage());
+          doSunsetJobs();
+        }
+        else if (!day && currentTime >= nextSunrise.getValue() &&
+                 currentTime < nextSunset.getValue())
+        {
+          doSunriseJobs();
+        }
+        else if (!(day || fauxDay) && currentTime >= nextFauxSunrise.getValue() &&
+                 currentTime < nextSunset.getValue())
+        {
+          doFauxSunriseJobs();
+        }
+      }
+    }
+    else
+    {
+      // set bool day in setup. Possibly using light levels, otherwise waiting for time to update
+      if (day && currentLight.getValue() < lightCutoff.getValue())
+      {
         doSunsetJobs();
       }
-      else if (!day && currentTime >= nextSunrise.getValue() && 
-                currentTime < nextSunset.getValue())
+      else if (!day && currentLight.getValue() > lightCutoff.getValue() &&
+               (timeStamp - nightStart > 7 * 60 * 60000 || nightStart == 0)) // atleast 7 hours of night
       {
         doSunriseJobs();
       }
-      else if (!(day || fauxDay) && currentTime >= nextFauxSunrise.getValue() && 
-                currentTime < nextSunset.getValue())
+      else if (!(day || fauxDay) && timeStamp - nightStart >= artificialNight.getValue() * 60000)
       {
         doFauxSunriseJobs();
       }
     }
-  }
-  else
-  {
-    // set bool day in setup. Possibly using light levels, otherwise waiting for time to update
-    if (day && currentLight.getValue() < lightCutoff.getValue())
-    {
-      doSunsetJobs();
-    }
-    else if (!day && currentLight.getValue() > lightCutoff.getValue() &&
-              (timeStamp - nightStart > 7 * 60 * 60000 || nightStart == 0)) // atleast 7 hours of night
-    {
-      doSunriseJobs();
-    }
-    else if (!(day || fauxDay) && timeStamp - nightStart >= artificialNight.getValue() * 60000)
-    {
-      doFauxSunriseJobs();
-    }
-  }
+  }  
 
   if(outsideTemp.getValue() >= tempCutoff.getValue() && !sprayDisabled)
   {
     startSpray();
   }
 
-  // if (timeStamp - lastSecondStamp > 1000)
-  // {
-  //   lastSecondStamp = timeStamp;
-  //   testFunction();
-  // }
+  // updateVictronData();
+  readVEData();
+
+  if (timeStamp - lastSecondStamp > 1000)
+  {
+    lastSecondStamp = timeStamp;
+    updateVEData();
+  }
 
   tasker.loop();
 }
@@ -386,7 +426,13 @@ void initializeNonVolatileStorage()
   // Initialize Non-Volatile Data Storage
   preferences.begin("ChickenCoop", false);
   // preferences.clear(); // uncomment to reset to defaults, probably put this behind a button
-  
+  batCapacity.makeDataPersist("batCapacity", 20);
+  if (preferences.isKey("charge"))
+  {
+    // Needs different treatment since this is not a DataPoint
+    storedAmpSeconds = preferences.getDouble("charge", 0);
+  }
+
   idealNight.makeDataPersist("idealNight", 540);
   artificialNight.makeDataPersist("artificialNight", 660);
   lightCutoff.makeDataPersist("lightCutoff", 150);
@@ -397,13 +443,12 @@ void initializeNonVolatileStorage()
   tempCutoff.makeDataPersist("tempCutoff", 100);
   sprayDuration.makeDataPersist("sprayDuration", 2);
   sprayCooldown.makeDataPersist("sprayCooldown", 20);
+  swapThermometerPositions.makeDataPersist("swapThermometer", false);
 
   // Uncomment when in situ
   avgDoorOpeningTime.makeDataPersist("avgDoorOpen", 45000);
-  // avgDoorOpeningTime.setValue(5000);  //remove
   doorOpeningTimes.initializeData(avgDoorOpeningTime.getValue());
   avgDoorClosingTime.makeDataPersist("avgDoorClose", 45000);
-  // avgDoorClosingTime.setValue(5000); //remove
   doorClosingTimes.initializeData(avgDoorClosingTime.getValue());
 }
 
@@ -444,33 +489,34 @@ void initializeTabs()
 void initializePanels()
 {
   // *** General Panel Display Elements ***
-  addDisplayElement(&secondsCounter, Tabs::General, "Seconds:");
-  addDisplayElement(&activeDoorSensors, Tabs::General, "Active Door Sensors");
+  // addDisplayElement(&secondsCounter, Tabs::General, "Seconds:");
   addDisplayElement(&isDay, Tabs::General, "Day?:");
+  addDisplayElement(&stateOfCharge, Tabs::General, "Battery Charge", "", "%");
+  addDisplayElement(&nextSunset, Tabs::General, "Nightfall");
+  addDisplayElement(&nextSunrise, Tabs::General, "Sunrise");
+  addDisplayElement(&insideTemp, Tabs::General, "Inside Temp.", "", " F");
+  addDisplayElement(&outsideTemp, Tabs::General, "Outside Temp.", "", " F");
   nightLightBSs.push_back(new ButtonState(turnNightLightOn, "Night Light Off", "Turn On")); // 0
   nightLightBSs.push_back(new ButtonState(turnNightLightOff, "Night Light On", "Turn Off")); // 1
   addButtonDisplayElement(&nightLightState, Tabs::General, &nightLightBSs);
-  lockStateBSs.push_back(new ButtonState(unlockDoor, "Door Locked", "Unlock"));  // 0
-  lockStateBSs.push_back(new ButtonState(lockDoor, "Door Unlocked", "Lock")); // 1
-  addButtonDisplayElement(&lockState, Tabs::General, &lockStateBSs);
-  // windUpStateBSs.push_back(new ButtonState(windUp, "Wind Up"));  // 0
-  // windUpStateBSs.push_back(new ButtonState(stopDoor, "Stop")); // 1
-  // addButtonDisplayElement(&windUpState, Tabs::General, &windUpStateBSs);
-  // windDownStateBSs.push_back(new ButtonState(windDown, "Wind Down"));  // 0
-  // windDownStateBSs.push_back(new ButtonState(stopDoor, "Stop")); // 1
-  // addButtonDisplayElement(&windDownState, Tabs::General, &windDownStateBSs);  
+  bistroLightsBSs.push_back(new ButtonState(turnBistroLightsOn, "Bistro Lights Off", "Turn On")); // 0
+  bistroLightsBSs.push_back(new ButtonState(turnBistroLightsOff, "Bistro Lights On", "Turn Off")); // 1
+  addButtonDisplayElement(&bistroLightsState, Tabs::General, &bistroLightsBSs);  
   doorBSs.push_back(new ButtonState(openDoor, "Door Closed", "Open Door"));  // 0
   doorBSs.push_back(new ButtonState(manualHaltDoor, "Door Opening", "Stop Door")); // 1
   doorBSs.push_back(new ButtonState(closeDoor, "Door Open", "Close Door"));        // 2
   doorBSs.push_back(new ButtonState(manualHaltDoor, "Door Closing", "Stop Door")); // 3
   doorBSs.push_back(new ButtonState(returnDoor, "Door Stopped", "Return Door"));   // 4
   addButtonDisplayElement(&doorState, Tabs::General, &doorBSs);
-  resetDefaultsBSs.push_back(new ButtonState(resetDefaultSettings, "Reset To Defaults"));
-  addButtonDisplayElement(&resetDefaultsState, Tabs::General, &resetDefaultsBSs);
 
   // *** Power Panel Display Elements ***
-  // TBD, almost all basic DisplayElements
-  // With the possibility of a few buttons on the bottom
+  addDisplayElement(&batCurrent, Tabs::Power, "Battery Current", "", "A");
+  addDisplayElement(&batVoltage, Tabs::Power, "System Voltage", "", "V");
+  addDisplayElement(&loadPower, Tabs::Power, "Power Consumption", "", "W");
+  addDisplayElement(&pvPower, Tabs::Power, "Power Generation", "", "W");
+  addUpDownDisplayElement(&batCapacity, Tabs::Power, "Battery Capacity", "", "Ah");
+  addDisplayElement(&stateOfCharge, Tabs::Power, "Battery Charge", "", "%");
+  addDisplayElement(&lastSocPrediction, Tabs::Power, "Predicted SoC @ full", "", "%");
 
   // *** Time Panel Display Elements ***
   addDisplayElement(&nextSunset, Tabs::Time, "Nightfall");
@@ -505,7 +551,22 @@ void initializePanels()
   sprayBSs.push_back(new ButtonState(startSpray, "Spray is Off", "Start Spray"));
   sprayBSs.push_back(new ButtonState(stopSpray, "Spray is On", "Stop Spray"));
   addButtonDisplayElement(&sprayState, Tabs::Temp, &sprayBSs);
+  swapThermStateBSs.push_back(new ButtonState(swapThermPosition, "Swap Thermo Labels"));
+  addButtonDisplayElement(&swapThermState, Tabs::Temp, &swapThermStateBSs);
 
+  // ***Utility Panel Display Elements***
+  addDisplayElement(&activeDoorSensors, Tabs::Util, "Active Door Sensors");
+  lockStateBSs.push_back(new ButtonState(unlockDoor, "Door Locked", "Unlock"));  // 0
+  lockStateBSs.push_back(new ButtonState(lockDoor, "Door Unlocked", "Lock")); // 1
+  lockStateDE = addButtonDisplayElement(&lockState, Tabs::Util, &lockStateBSs);
+  windUpStateBSs.push_back(new ButtonState(windUp, "Wind Up"));  // 0
+  windUpStateBSs.push_back(new ButtonState(stopDoor, "Stop")); // 1
+  windUpDE = addButtonDisplayElement(&windUpState, Tabs::Util, &windUpStateBSs);
+  windDownStateBSs.push_back(new ButtonState(windDown, "Wind Down"));  // 0
+  windDownStateBSs.push_back(new ButtonState(stopDoor, "Stop")); // 1
+  windDownDE = addButtonDisplayElement(&windDownState, Tabs::Util, &windDownStateBSs);  
+  resetDefaultsBSs.push_back(new ButtonState(resetDefaultSettings, "Reset To Defaults"));
+  addButtonDisplayElement(&resetDefaultsState, Tabs::Util, &resetDefaultsBSs);
 }
 
 DisplayElement *addDisplayElement(DataPoint *dp, int8_t panel, String label, String pre, String suf)
@@ -539,78 +600,71 @@ void initializeInteractivity()
   lightCutoffDE->setInteractivity(timeOrLightState.getValue() != 0);
 
   resetDoorSensorsDE->setInteractivity(doorSensorStatus.getValue() != "Nominal");
+
+  if (lockState.getValue() == 0)
+  {
+    windUpDE->setInteractivity(false);
+    windDownDE->setInteractivity(false);
+  }
 }
 
-void initializeDayorNight()
+void initializeDayorNightfromTime()
 {
-  if(timeOrLightState.getValue() == 0) //time
+  double currentTime = Utility::toFractionalMinutes(tm.tm_hour, tm.tm_min, tm.tm_sec);
+  if (currentTime >= nextSunrise.getValue() && currentTime < nextSunset.getValue())
   {
-    double currentTime = Utility::toFractionalMinutes(tm.tm_hour, tm.tm_min, tm.tm_sec);
-    if (currentTime >= nextSunrise.getValue() && currentTime < nextSunset.getValue())
-    {
-      day = true;
-      isDay.setValue(true);
-    }
-    else
-    {
-      day = false;
-      isDay.setValue(false);
-    }
+    day = true;
+    isDay.setValue(true);
   }
   else
   {
-    if(currentLight.getValue() >= lightCutoff.getValue())
-    {
-      day = true;
-      isDay.setValue(true);
-    }
-    else
-    {
-      day = false;
-      isDay.setValue(false);
-    }
+    day = false;
+    isDay.setValue(false);
   }
+  dayInit = true; //hack, find better solution
+}
+
+void initializeDayorNightfromLight()
+{
+  if (currentLight.getValue() >= lightCutoff.getValue())
+  {
+    day = true;
+    isDay.setValue(true);
+  }
+  else
+  {
+    day = false;
+    isDay.setValue(false);
+  }
+  dayInit = true; // hack, find better solution
 }
 
 void initializeDoorState()
 {
   if (digitalRead(openDoorSensorPin) == LOW && digitalRead(closedDoorSensorPin) == HIGH)
   {
-    doorState.setValue(2);
+    doorState.setValue(2); // open
   }
   else if (digitalRead(closedDoorSensorPin) == LOW && digitalRead(openDoorSensorPin) == HIGH)
   {
-    doorState.setValue(0);
+    doorState.setValue(0); //closed
+  }
+  else if (digitalRead(closedDoorSensorPin) == HIGH && digitalRead(openDoorSensorPin) == HIGH)
+  {
+    doorOverride = true;
+    doorTimeout = avgDoorClosingTime.getValue();
+    closeDoor();
+    // possibly display somewhere that we performed a blind closure
   }
   else
   {
-    //Error state, needs better handling.  For now assume door is in right spot
-    if(day)
-    {
-      doorState.setValue(2);
-    }
-    else
-    {
-      doorState.setValue(0);
-    }
+    // Error State, should never get here
+    Utility::status("Both door sensors active.");
   }
 }
 
-
-// void addButtonDisplayElement(DataPoint* dp, int8_t panel, String btnTxt, 
-//                               String altTxt, String label)
-// {
-//   // refactor this to base Y position off the panel bottom, not the last horizontal DE
-//   if(buttonYposMultiplier[panel] == 0)
-//   {
-//     buttonYposMultiplier[panel] = panelDEs[panel].size();
-//   }
-//   DisplayElement *de = new ButtonElement(&tft, dp,
-//       42 + 78 * (panelDEs[panel].size() - buttonYposMultiplier[panel]),
-//       panelTop + 20 + 40 + (deHeight * buttonYposMultiplier[panel]), 72, 64,
-//       btnTxt, altTxt, label);
-//   panelDEs[panel].push_back(de);
-// }
+/*--------------------------------------------------------------*/
+// GUI functions
 
 void drawMainUI()
 {
@@ -643,7 +697,6 @@ void drawPanelUI()
   }
 }
 
-// TODO - break this up into updateSysTime and drawSysTime
 void drawSysTime()
 {
   time(&now);             // read the current time
@@ -851,6 +904,72 @@ void updateSystemTime()
   tzset();
 }
 
+void readVEData()
+{
+  while (Serial2.available())
+  {
+    myVE.rxData(Serial2.read());
+  }
+  yield();
+}
+
+void updateVEData()
+{
+  for (int i = 0; i < myVE.veEnd; i++)
+  {
+    if (strcmp(myVE.veName[i], "I") == 0)
+    {
+      batCurrent.setValue(atof(myVE.veValue[i]) / 1000); // mA to A
+    }
+    else if (strcmp(myVE.veName[i], "V") == 0)
+    {
+      batVoltage.setValue(atof(myVE.veValue[i]) / 1000); // mA to A
+    }
+    else if (strcmp(myVE.veName[i], "IL") == 0)
+    {
+      loadPower.setValue((atof(myVE.veValue[i]) / 1000) * batVoltage.getValue()); // mA to A
+    }
+    else if (strcmp(myVE.veName[i], "PPV") == 0)
+    {
+      pvPower.setValue(atof(myVE.veValue[i])); 
+    }
+    else if (strcmp(myVE.veName[i], "CS") == 0)
+    {
+      uint8_t state = atoi(myVE.veValue[i]);
+      if (state == 5) // Charger is in "Float" state, so battery is fully charged
+      {
+        storedAmpSeconds = batCapacity.getValue() * 3600; // Ah to As
+        if(!batFloat)
+        {
+          lastSocPrediction.setValue(stateOfCharge.getValue());
+          batFloat = true;
+        }
+      }
+      else
+      {
+        // Since this is being called once per second, our present current is approximately
+        // equal to the change in stored Amp*Seconds
+        // probably want to account for temperature, and maybe Peukert's law
+        // For now assuming 95% charge efficiency
+        batFloat = false;
+        float current = batCurrent.getValue();
+        if (abs(current) > 0.09) // Ignore current below threshold
+        {
+          if (current > 0) // charging
+          {
+            storedAmpSeconds += current * 0.95;
+          }
+          else
+          {
+            storedAmpSeconds += current;
+          }
+        }
+      }
+      stateOfCharge.setValue((storedAmpSeconds / (batCapacity.getValue() * 3600)) * 100);
+    }
+  }
+}
+
 /*
 void touch_calibrate()
 {
@@ -978,10 +1097,10 @@ void updateLightLevels()
   currentLight.setValue(analogRead(prPin));
 }
 
-void testFunction()
-{
-  secondsCounter.setValue(tm.tm_sec);
-}
+// void testFunction()
+// {
+//   secondsCounter.setValue(tm.tm_sec);
+// }
 
 void resetDefaultSettings()
 {
@@ -1017,14 +1136,26 @@ void updateActiveDoorSensors()
 
 void turnNightLightOn()
 {
-  // toggle relevant pin
+  digitalWrite(nightLightPin, HIGH);
   nightLightState.setValue(1);
 }
 
 void turnNightLightOff()
 {
-  // toggle relevant pin
+  digitalWrite(nightLightPin, LOW);
   nightLightState.setValue(0);
+}
+
+void turnBistroLightsOn()
+{
+  digitalWrite(bistroLightPin, HIGH);
+  bistroLightsState.setValue(1);
+}
+
+void turnBistroLightsOff()
+{
+  digitalWrite(bistroLightPin, LOW);
+  bistroLightsState.setValue(0);
 }
 
 void turnMainLightOn()
@@ -1044,17 +1175,27 @@ void unlockDoor()
 {
   digitalWrite(lockPin, LOW);
   lockState.setValue(1);
+  windUpDE->setInteractivity(true);
+  windDownDE->setInteractivity(true);
 }
 
 void lockDoor()
 {
   digitalWrite(lockPin, HIGH);
   lockState.setValue(0);
+  windUpDE->setInteractivity(false);
+  windDownDE->setInteractivity(false);
 }
 
 void openDoor()
 {
-  digitalWrite(lockPin, LOW);      // unlock
+  if(digitalRead(openDoorSensorPin) == LOW && !doorOverride)
+  {
+    doorState.setValue(2);
+    return;
+  }
+  // digitalWrite(lockPin, LOW);      // unlock
+  unlockDoor();
   tasker.setTimeout(windUp, 200); // begin raising door after 0.2 seconds (for lock)
   // doorStartTime = millis();  // now setting in windUp
   doorState.setValue(1);
@@ -1068,7 +1209,13 @@ void openDoor()
 
 void closeDoor()
 {
-  digitalWrite(lockPin, LOW);        // unlock
+  if (digitalRead(closedDoorSensorPin) == LOW && !doorOverride)
+  {
+    doorState.setValue(0);
+    return;
+  }
+  // digitalWrite(lockPin, LOW);        // unlock
+  unlockDoor();
   tasker.setTimeout(windDown, 200); // begin closing door after 0.2 seconds
   // doorStartTime = millis();  // now setting in windDown
   doorState.setValue(3);
@@ -1129,25 +1276,31 @@ void stopDoor()
   openingDoor = closingDoor = false;
   digitalWrite(motFwd, LOW);
   digitalWrite(motRev, LOW);
-  digitalWrite(lockPin, HIGH);
-  // windUpState.setValue(0); // probs remove, testing
-  // windDownState.setValue(0); // probs remove, testing
+  // digitalWrite(lockPin, HIGH); // locked
+  lockDoor();
+  lockStateDE->setInteractivity(true);
+  windUpState.setValue(0); // probs remove, testing
+  windDownState.setValue(0); // probs remove, testing
 }
 
 void windUp()
 {
+  lockStateDE->setInteractivity(false);
   digitalWrite(motFwd, HIGH);
+  digitalWrite(motRev, LOW);
   doorStartTime = millis();
   openingDoor = true;
-  // windUpState.setValue(1); // probs remove, testing
+  windUpState.setValue(1); // probs remove, testing
 }
 
 void windDown()
 {
+  lockStateDE->setInteractivity(false);
+  digitalWrite(motFwd, LOW);
   digitalWrite(motRev, HIGH);
   doorStartTime = millis();
   closingDoor = true;
-  // windDownState.setValue(1); //probs remove, testing
+  windDownState.setValue(1); //probs remove, testing
 }
 
 void resetDoorSensors()
@@ -1176,13 +1329,21 @@ void updateTemperatures()
 
 void readTemperatures()
 {
-  insideTemp.setValue(tempSensors.getTempFByIndex(0));
-  outsideTemp.setValue(tempSensors.getTempFByIndex(1));
+  if(swapThermometerPositions.getValue())
+  {
+    outsideTemp.setValue(tempSensors.getTempFByIndex(1));
+    insideTemp.setValue(tempSensors.getTempFByIndex(0));
+  }
+  else
+  {
+  outsideTemp.setValue(tempSensors.getTempFByIndex(0));
+  insideTemp.setValue(tempSensors.getTempFByIndex(1));
+  }
 }
 
 void startSpray()
 {
-  // Set relevant pin to start sprayer
+  digitalWrite(sprayPin, LOW);
   sprayState.setValue(1);
   tasker.setTimeout(stopSpray, 60000 * sprayDuration.getValue());
   sprayDisabled = true;
@@ -1190,7 +1351,7 @@ void startSpray()
 
 void stopSpray()
 {
-  // Set relevant pin to stop sprayer
+  digitalWrite(sprayPin, HIGH);
   sprayState.setValue(0);
   tasker.setTimeout(enableSpray, 60000 * sprayCooldown.getValue());
 }
@@ -1198,6 +1359,12 @@ void stopSpray()
 void enableSpray()
 {
   sprayDisabled = false;
+}
+
+
+void swapThermPosition()
+{
+  swapThermometerPositions.setValue(!swapThermometerPositions.getValue());
 }
 
 ///////////////////////////////////////////////////////
@@ -1253,9 +1420,10 @@ void wifiAttemptConnection()
     // tasker.setTimeout(initializeDayorNight, 6000); //possibly refactor as a single function
     // tasker.setTimeout(initializeDoorState, 7000); //that can be called with/out WiFi
     updateNightHours();
-    initializeDayorNight();
-    initializeDoorState();
-    // setupMDNShostname();
+    if(timeOrLightState.getValue() == 0)
+    {
+      initializeDayorNightfromTime();
+    }
     setupOTAUpdates();
     tasker.cancel(wifiAttemptConnection);
     }
@@ -1263,7 +1431,6 @@ void wifiAttemptConnection()
 
 void wifiDisconnectCallback(WiFiEvent_t event, WiFiEventInfo_t info)
 {
-  // readyForOTA = false;
   wifiConnect();
 }
 
@@ -1293,6 +1460,10 @@ void setupOTAUpdates()
   ArduinoOTA
       .onStart([]()
                {
+      // This might be the place to call a function for saving data with preferences.h
+      // For Data that changes too frequently to constantly save updates
+      preferences.putDouble("charge", storedAmpSeconds);
+
       String type;
       if (ArduinoOTA.getCommand() == U_FLASH)
         type = "sketch";
@@ -1316,19 +1487,5 @@ void setupOTAUpdates()
 
   ArduinoOTA.setPassword("Xb476X3aU");
   ArduinoOTA.begin();
-  //probably this flag is redundant, 
-  // readyForOTA = true;
 }
 
-// void setupMDNShostname()
-// {
-//   if (!MDNS.begin("ChickenCoop"))
-//   {
-//     Serial.println("Error setting up MDNS responder!");
-//     tasker.setTimeout(setupMDNShostname, 1000);
-//   }
-//   else
-//   {
-//     // Utility::status("Set Hostname");
-//   }
-// }

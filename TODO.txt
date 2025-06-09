@@ -1,21 +1,39 @@
-Clean up door/day initialization
+Door still trying to open on restart during the day
+  -fixed with hacky flag, would like a better solution
 
-Get interface ready for reading from Victron
+Alarm states for relevant DataPoints
+  -Battery Charge
+  -insideTemp
+  -BatteryCurrent
+  -DoorSensors
 
-Hook up Power Panel
-  -compute State of Charge
-  -possibly graph voltage etc over time
+Max-Min for UpDown Elements
+  -BatCapacity
+  -BistroLight Dimmer
+  -idealNight
+  -artificialNight
+  -LightCutoff
 
-Hook Up General Panel
+Would like to graph Power values over time
+  -State of Charge
+  -Power produced
+  -Power Consumed
+  -maybe voltage
+  -maybe peak Power production per day
+
+Setup system to track accuracy of SoC predictions, and adjust parameters accordingly
+
+Modify General Panel to suite IRL needs
   -most relevant DataPoints
   -possibly move over mainLight control
-  -eventually a button to change wifi login
-  -maybe also a way to manually set time
 
-A confirmation feature for resetting to defaults and other dangerous functions
+Build out settings tab
+    -eventually a button to change wifi login
+    -maybe also a way to manually set time
+    -A confirmation feature for resetting to defaults and other dangerous functions
 
-Professionalize assets ie.. 
+
+Professionalize assets ie..
+  -String() -> std::string 
   -tasker -> freeRTOS
-  -String() -> std::string
-
-Explore multi-threading optimizations
+    +Explore multi-threading optimizations

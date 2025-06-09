@@ -59,7 +59,7 @@ void TFT_eSPI_Tab::setLabelDatum(int16_t x_delta, int16_t y_delta, uint8_t datum
 void TFT_eSPI_Tab::drawTab(String long_name)
 {
   uint16_t fill, bottomLineColor;
-  uint8_t offset = _w / 10;
+  uint8_t offset = _w / 12;
 
   // changing (in)active parameters
   if (currstate)

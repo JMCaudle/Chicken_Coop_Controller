@@ -43,10 +43,10 @@ public:
   void drawValue(String val);
   IncrementButton plusBtn, minusBtn;
 protected:
-  int16_t _lastValWidth; // not currently using
-  int8_t _bw = 26; // Button Width
-  int8_t _bh = 24; // Button Height
-  int8_t _bs = 5;  // Button Spacing
+  uint16_t _lastValWidth; // not currently using
+  uint8_t _bw = 26; // Button Width
+  uint8_t _bh = 24; // Button Height
+  uint8_t _bs = 5;  // Button Spacing
 };
 
 class ButtonElement : public DisplayElement
