@@ -9,10 +9,18 @@ extern TFT_eSPI tft;
 
 // using namespace Utility;
 
-void Utility::setPanelTextSettings()
+void Utility::setPanelTextSettings(bool alarm)
 {
   tft.setFreeFont(DISPLAY_ELEMENT_FONT);
-  tft.setTextColor(TFT_WHITE, TFT_LIGHTGREY);
+  if(alarm)
+  {
+    tft.setTextColor(TFT_RED, TFT_LIGHTGREY);
+  }
+  else
+  {
+    tft.setTextColor(TFT_WHITE, TFT_LIGHTGREY);
+  }
+
 }
 
 String Utility::minutesToTimeString(int mins)

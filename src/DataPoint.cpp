@@ -16,7 +16,7 @@ void DataPoint::makeDataPersist(String key)
 
 void DataPoint::processValue(){}
 
-void DataPoint::setCallback(std::function<void(String)> cbk)
+void DataPoint::setCallback(std::function<void(String, bool)> cbk)
 {
   onChanged = cbk;
 }
@@ -48,7 +48,7 @@ void BoolData::processValue()
 {
   if (onChanged != nullptr)
   {
-    onChanged(_value ? "True" : "False");
+    onChanged(_value ? "True" : "False", false);
   }
 }
 
@@ -65,9 +65,11 @@ void BoolData::setValue(bool val)
   }
 }
 
-IntData::IntData(bool minutes) : DataPoint() 
+IntData::IntData(bool minutes, int lowValue, int highValue) : DataPoint() 
 {
   _minutes = minutes;
+  _lowValue = lowValue;
+  _highValue = highValue;
 }
 
 void IntData::makeDataPersist(String key, int preset)
@@ -90,14 +92,20 @@ void IntData::processValue()
 {
   if (onChanged != nullptr)
   {
-    if(_minutes)
+    String sVal;
+    if (_minutes)
     {
-      onChanged(Utility::minutesToTimeString(_value));
+      sVal = Utility::minutesToTimeString(_value);
+      // onChanged(Utility::minutesToTimeString(_value));
     }
     else
     {
-      onChanged((String)_value);
+      sVal = (String)_value;
+      // onChanged((String)_value);
     }
+    bool alarm = _highValue > _lowValue && (_value > _highValue || _value < _lowValue);
+
+    onChanged(sVal, alarm);
   }
 }
 
@@ -115,7 +123,11 @@ void IntData::setValue(int val)
   }
 }
 
-// FloatData::FloatData() : DataPoint() {}
+FloatData::FloatData(float lowValue, float highValue) : DataPoint() 
+{
+  _lowValue = lowValue;
+  _highValue = highValue;
+}
 
 void FloatData::makeDataPersist(String key, float preset)
 {
@@ -136,7 +148,8 @@ void FloatData::processValue()
 {
   if (onChanged != nullptr)
   {
-    onChanged((String)_value);
+    bool alarm = _highValue > _lowValue && (_value > _highValue || _value < _lowValue);
+    onChanged((String)_value, alarm);
   }
 }
 
@@ -179,11 +192,11 @@ void DoubleData::processValue()
   {
     if (_fractionalMinute)
     {
-      onChanged(Utility::fractionalMinutesToTimeString(_value));
+      onChanged(Utility::fractionalMinutesToTimeString(_value), false);
     }
     else
     {
-      onChanged((String)_value);
+      onChanged((String)_value, false);
     }
   }
 }
@@ -201,7 +214,10 @@ void DoubleData::setValue(double val)
   }
 }
 
-// StringData::StringData() : DataPoint() {}
+StringData::StringData(String ideal) : DataPoint() 
+{
+  _idealValue = ideal;
+}
 
 void StringData::makeDataPersist(String key, String preset)
 {
@@ -236,6 +252,6 @@ void StringData::processValue()
 {
   if (onChanged != nullptr)
   {
-    onChanged(_value);
+    onChanged(_value, _idealValue != "" && _value != _idealValue);
   }
 }

@@ -19,7 +19,7 @@ public:
   DataPoint* getDataPoint();
 
   virtual void drawLabel();
-  virtual void drawValue(String val);
+  virtual void drawValue(String val, bool alarm = false);
 
   void setInteractivity(bool interactive);
   void noTouch();
@@ -39,10 +39,12 @@ class UpDownElement : public DisplayElement
 {
 public:
   UpDownElement(TFT_eSPI* gfx, DataPoint* dp, String label, int x, int y, int w, int h,
-                 String pre = "", String suf = "");
-  void drawValue(String val);
+                 int min, int max, String pre = "", String suf = "");
+  void drawValue(String val, bool alarm = false);
   IncrementButton plusBtn, minusBtn;
 protected:
+  int _min;
+  int _max;
   uint16_t _lastValWidth; // not currently using
   uint8_t _bw = 26; // Button Width
   uint8_t _bh = 24; // Button Height
@@ -58,7 +60,7 @@ public:
                 std::vector<ButtonState*>* btnStates);
   CustomButton btn;
   void drawLabel();
-  void drawValue(String val = "");
+  void drawValue(String val = "", bool alarm = false);
   std::function<void(void)> falseFunction;
   std::function<void(void)> trueFunction;
 

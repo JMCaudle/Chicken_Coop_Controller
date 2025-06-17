@@ -18,7 +18,7 @@ DisplayElement::DisplayElement(TFT_eSPI* gfx, DataPoint* dp, String label, int x
 
 void DisplayElement::linkUpDataPoint()
 {
-  _dp->setCallback([&](String s){ this->drawValue(s); });
+  _dp->setCallback([&](String s,  bool a){ this->drawValue(s, a); });
 }
 
 void DisplayElement::unlinkDataPoint()
@@ -34,14 +34,15 @@ DataPoint* DisplayElement::getDataPoint()
 void DisplayElement::drawLabel()
 {
   _gfx->setTextDatum(CL_DATUM);
+  Utility::setPanelTextSettings();
   _dataPadding = (_w - 10) - _gfx->drawString(_label, _x + 5, _y + (_h / 2));
 }
 
-void DisplayElement::drawValue(String val)
+void DisplayElement::drawValue(String val, bool alarm)
 {
   // Utility::status("In the BASE drawValue method.");
   _gfx->setTextDatum(CR_DATUM);
-  Utility::setPanelTextSettings();
+  Utility::setPanelTextSettings(alarm);
   _gfx->setTextPadding(_dataPadding);
   _gfx->drawString(_prefix + val + _suffix, _x + _w - 5, _y + (_h / 2));
 }
@@ -130,10 +131,12 @@ void DisplayElement::handleButtonTouchInput(uint16_t t_x, uint16_t t_y)
 
 // Can only be used with DataPoint::IntData
 UpDownElement::UpDownElement(TFT_eSPI *gfx, DataPoint *dp, String label, int x, int y,
-                              int w, int h, String pre, String suf)
+                              int w, int h, int min, int max, String pre, String suf)
 : DisplayElement(gfx, dp, label, x, y, w, h, pre, suf)
 {
   _lastValWidth = 0;
+  _min = min;
+  _max = max;
   IntData *idp = (IntData *)dp;
   buttons[0] = &minusBtn;
   buttons[0]->setMyFunction([idp]()
@@ -144,7 +147,7 @@ UpDownElement::UpDownElement(TFT_eSPI *gfx, DataPoint *dp, String label, int x, 
                             { idp->setValue(idp->getValue() + 1); });
   }
 
-void UpDownElement::drawValue(String val)
+void UpDownElement::drawValue(String val, bool alarm)
 {
   _gfx->setTextDatum(CR_DATUM);
   Utility::setPanelTextSettings();
@@ -155,13 +158,21 @@ void UpDownElement::drawValue(String val)
   uint16_t valWidth = _gfx->textWidth(catStr);
   // uint16_t valWidth = catStr.length() * _gfx->textWidth("8");
   // uint16_t valWidth = catStr.length() * _gfx->textWidth("W");
-  uint16_t fill = _interactive ? TFT_WHITE : TFT_MIDGREY;
+
+  // if (val.compareTo())
+
+  bool interactive = _interactive && val.toInt() < _max;
+  uint16_t fill = interactive ? TFT_WHITE : TFT_MIDGREY;
+  // uint16_t fill = _interactive ? TFT_WHITE : TFT_MIDGREY;
 
   plusBtn.initButton(_gfx, _x + _w - (_bw + _bs), _y + (_h / 2), _bw, _bh,
-                     TFT_BLACK, fill, TFT_LIGHTGREY, true);
+                     TFT_BLACK, fill, TFT_LIGHTGREY, true, interactive);
   plusBtn.drawButton();
+
+  interactive = _interactive && val.toInt() > _min;
+  fill = interactive ? TFT_WHITE : TFT_MIDGREY;
   minusBtn.initButton(_gfx, _x + _w - (_bw + 3 * _bs) - valWidth, _y + (_h / 2), _bw, _bh,
-                      TFT_BLACK, fill, TFT_LIGHTGREY, false);
+                      TFT_BLACK, fill, TFT_LIGHTGREY, false, interactive);
   minusBtn.drawButton();
   Utility::setPanelTextSettings();
 }
@@ -181,7 +192,7 @@ void ButtonElement::drawLabel()
 
 }
 
-void ButtonElement::drawValue(String val)
+void ButtonElement::drawValue(String val, bool alarm)
 {
   int stIdx = val.toInt(); // investigate a switch to std::string
 

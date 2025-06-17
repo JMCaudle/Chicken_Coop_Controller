@@ -152,9 +152,10 @@ bool CustomButton::justReleased() { return (!currstate && laststate); }
 
 void IncrementButton::initButton(TFT_eSPI *gfx, int16_t x, int16_t y,
                                  uint16_t w, uint16_t h, uint16_t outline, uint16_t fill,
-                                 uint16_t textcolor, bool positive) 
+                                 uint16_t textcolor, bool positive, bool interactive) 
 {
   _positive = positive;
+  _interactive = interactive;
   _x = x;
   _y = y;
   _w = w;
@@ -212,6 +213,11 @@ void IncrementButton::drawButton(bool inverted, String long_name)
 
 bool IncrementButton::contains(int16_t x, int16_t y)
 {
+  if(! _interactive) 
+    { 
+      return false; 
+    }
+    
   // https://stackoverflow.com/questions/2049582/how-to-determine-if-a-point-is-in-a-2d-triangle
   int as_x = x - _v1.x;
   int as_y = y - _v1.y;

@@ -13,11 +13,11 @@ public:
   virtual void makeDataPersist(String key);
 
   virtual void processValue();
-  void setCallback(std::function<void(String)> cbk);
+  void setCallback(std::function<void(String, bool)> cbk);
   void clearCallback();
 
 protected:
-  std::function<void(String)> onChanged;
+  std::function<void(String, bool)> onChanged;
   String _key;
 };
 
@@ -37,7 +37,7 @@ private:
 class IntData : public DataPoint
 {
 public:
-  IntData(bool minutes = false);
+  IntData(bool minutes = false, int lowValue = -1, int highValue = -2);
   void makeDataPersist(String key, int preset = 0);
   int getValue();
   void setValue(int val);
@@ -53,7 +53,7 @@ private:
 class FloatData : public DataPoint
 {
 public:
-  // FloatData();
+  FloatData(float lowValue = -1, float highValue = -2);
   void makeDataPersist(String key, float preset = 0.0);
   float getValue();
   void setValue(float val);
@@ -82,7 +82,7 @@ private:
 class StringData : public DataPoint
 {
 public:
-  // StringData();
+  StringData(String ideal = "");
   void makeDataPersist(String key, String preset = "");
   String getValue();
   void setValue(String val);

@@ -62,14 +62,14 @@ class IncrementButton : public CustomButton
 public:
   void initButton(TFT_eSPI *gfx, int16_t x, int16_t y,
                   uint16_t w, uint16_t h, uint16_t outline, uint16_t fill,
-                  uint16_t textcolor, bool positive);
+                  uint16_t textcolor, bool positive, bool interactive);
   void drawButton(bool inverted = false, String long_name = "");
   bool contains(int16_t x, int16_t y);
 
 protected:
   bool _positive;
+  bool _interactive;
   Point _v1, _v2, _v3;
-  
 };
 
 #endif

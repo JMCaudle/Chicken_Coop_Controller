@@ -61,7 +61,7 @@ namespace Utility
     int index_;
   };
 
-  void setPanelTextSettings();
+  void setPanelTextSettings(bool alarm = false);
 
   String minutesToTimeString(int min);
   String fractionalMinutesToTimeString(double fM);

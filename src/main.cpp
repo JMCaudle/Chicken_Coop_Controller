@@ -44,7 +44,7 @@ VeDirectFrameHandler myVE;
 
 #define MY_NTP_SERVER "pool.ntp.org"
 
-#define VERSION "2.3.6"
+#define VERSION "2.3.8"
 //------------------------------------------------------------------------------------------
 
 //input pins
@@ -87,10 +87,10 @@ void initializeNonVolatileStorage();
 void initializePins();
 void initializeTabs();
 void initializePanels();
-DisplayElement* addDisplayElement(DataPoint *dp, int8_t panel, String label, String pre = "", String suf = "");
-DisplayElement* addUpDownDisplayElement(DataPoint *dp, int8_t panel, String label, String pre = "", String suf = "");
-// void addButtonDisplayElement(DataPoint *dp, int8_t panel, String btnTxt,
-//                              String altTxt = "", String label = "");
+DisplayElement* addDisplayElement(DataPoint *dp, int8_t panel, String label, 
+                                  String pre = "", String suf = "");
+DisplayElement* addUpDownDisplayElement(DataPoint *dp, int8_t panel, String label, 
+                                        int min, int max, String pre = "", String suf = "");
 DisplayElement* addButtonDisplayElement(DataPoint *dp, int8_t panel,
                                         std::vector<ButtonState *> *buttonStates);
 void initializeInteractivity();
@@ -147,7 +147,6 @@ void calcByLight();
 void calcByTime();
 
 
-
 void startSpray();
 void stopSpray();
 void enableSpray();
@@ -190,12 +189,12 @@ IntData bistroLightsState;
 std::vector<ButtonState *> bistroLightsBSs;
 
 
-FloatData batCurrent;
+FloatData batCurrent(-5, 10);
 FloatData batVoltage;
 FloatData loadPower;
 FloatData pvPower;
 IntData batCapacity;
-IntData stateOfCharge;
+IntData stateOfCharge(false, 20, 120);
 IntData lastSocPrediction;
 
 DoubleData nextSunset(true);
@@ -208,7 +207,7 @@ Utility::RollingAverage avgSunsetLightLevel(10);
 DisplayElement* lightCutoffDE;
 IntData currentLight;
 StringData doorStatus;
-StringData doorSensorStatus;
+StringData doorSensorStatus("Nominal");
 IntData mainLightState;
 std::vector<ButtonState *> mainLightBSs;
 IntData doorState;
@@ -219,8 +218,8 @@ DisplayElement *resetDoorSensorsDE;
 IntData timeOrLightState;
 std::vector<ButtonState *> timeOrLightBSs;
 
-FloatData insideTemp;
-FloatData outsideTemp;
+FloatData insideTemp(45, 105);
+FloatData outsideTemp(10, 115);
 IntData tempCutoff;
 IntData sprayDuration;
 IntData sprayCooldown;
@@ -340,6 +339,9 @@ void setup()
   lastSecondStamp = millis();
 
   Utility::status("Version " + (String)VERSION);
+
+  // String test = "9:00";
+  // Utility::status("*" + (String)test.toInt() + "*");
 }
 
 //------------------------------------------------------------------------------------------
@@ -514,16 +516,16 @@ void initializePanels()
   addDisplayElement(&batVoltage, Tabs::Power, "System Voltage", "", "V");
   addDisplayElement(&loadPower, Tabs::Power, "Power Consumption", "", "W");
   addDisplayElement(&pvPower, Tabs::Power, "Power Generation", "", "W");
-  addUpDownDisplayElement(&batCapacity, Tabs::Power, "Battery Capacity", "", "Ah");
+  addUpDownDisplayElement(&batCapacity, Tabs::Power, "Battery Capacity", 0, 1000, "", "Ah");
   addDisplayElement(&stateOfCharge, Tabs::Power, "Battery Charge", "", "%");
   addDisplayElement(&lastSocPrediction, Tabs::Power, "Predicted SoC @ full", "", "%");
 
   // *** Time Panel Display Elements ***
   addDisplayElement(&nextSunset, Tabs::Time, "Nightfall");
   addDisplayElement(&nextSunrise, Tabs::Time, "Sunrise");
-  addUpDownDisplayElement(&idealNight, Tabs::Time, "Ideal Night");
-  addUpDownDisplayElement(&artificialNight, Tabs::Time, "Achieved Night");
-  lightCutoffDE = addUpDownDisplayElement(&lightCutoff, Tabs::Time, "Light Cutoff");
+  addUpDownDisplayElement(&idealNight, Tabs::Time, "Ideal Night", 6, 12);//420, 720);
+  addUpDownDisplayElement(&artificialNight, Tabs::Time, "Achieved Night", 6, 12); // 420, 720);
+  lightCutoffDE = addUpDownDisplayElement(&lightCutoff, Tabs::Time, "Light Cutoff", 0, 4095);
   addDisplayElement(&currentLight, Tabs::Time, "Light Level");
   // addDisplayElement(&doorStatus, Tabs::Time, "Door");
   addDisplayElement(&doorSensorStatus, Tabs::Time, "Door Sensors");
@@ -545,9 +547,9 @@ void initializePanels()
   // ***Temp Panel Display Elements***
   addDisplayElement(&insideTemp, Tabs::Temp, "Inside Temp.", "", " F");
   addDisplayElement(&outsideTemp, Tabs::Temp, "Outside Temp.", "", " F");
-  addUpDownDisplayElement(&tempCutoff, Tabs::Temp, "Spray at Temp.", "", " F");
-  addUpDownDisplayElement(&sprayDuration, Tabs::Temp, "Spray Duration", "", "m");
-  addUpDownDisplayElement(&sprayCooldown, Tabs::Temp, "Spray Cooldown", "", "m");
+  addUpDownDisplayElement(&tempCutoff, Tabs::Temp, "Spray at Temp.", 80, 120, "", " F");
+  addUpDownDisplayElement(&sprayDuration, Tabs::Temp, "Spray Duration", 0, 30, "", "m");
+  addUpDownDisplayElement(&sprayCooldown, Tabs::Temp, "Spray Cooldown", 0, 1440, "", "m");
   sprayBSs.push_back(new ButtonState(startSpray, "Spray is Off", "Start Spray"));
   sprayBSs.push_back(new ButtonState(stopSpray, "Spray is On", "Stop Spray"));
   addButtonDisplayElement(&sprayState, Tabs::Temp, &sprayBSs);
@@ -577,10 +579,10 @@ DisplayElement *addDisplayElement(DataPoint *dp, int8_t panel, String label, Str
   return de;
 }
 
-DisplayElement* addUpDownDisplayElement(DataPoint *dp, int8_t panel, String label, String pre, String suf)
+DisplayElement* addUpDownDisplayElement(DataPoint *dp, int8_t panel, String label, int min, int max, String pre, String suf)
 {
   DisplayElement *de = new UpDownElement(&tft, dp, label, 0,
-    panelTop + 20 + (deHeight * panelDEs[panel].size()), maxWidth, deHeight, pre, suf);
+    panelTop + 20 + (deHeight * panelDEs[panel].size()), maxWidth, deHeight, min, max, pre, suf);
   panelDEs[panel].push_back(de);
   return de;
 }

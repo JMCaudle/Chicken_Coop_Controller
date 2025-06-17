@@ -1,18 +1,7 @@
 Door still trying to open on restart during the day
   -fixed with hacky flag, would like a better solution
 
-Alarm states for relevant DataPoints
-  -Battery Charge
-  -insideTemp
-  -BatteryCurrent
-  -DoorSensors
-
-Max-Min for UpDown Elements
-  -BatCapacity
-  -BistroLight Dimmer
-  -idealNight
-  -artificialNight
-  -LightCutoff
+Fix Min-Max implementation for UpDown elements in "time" format
 
 Would like to graph Power values over time
   -State of Charge
